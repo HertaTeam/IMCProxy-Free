@@ -1,0 +1,46 @@
+{
+  "name": "eaglercraft-reverse-proxy",
+  "version": "1.0.0",
+  "description": "让原版 Minecraft 1.8.9 客户端连接 Eaglercraft WebSocket 服务器",
+  "main": "build/reverse_proxy/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/reverse_proxy/index.js",
+    "start:proxy": "node build/reverse_proxy/index.js",
+    "dev": "tsc && node build/reverse_proxy/index.js"
+  },
+  "keywords": [
+    "minecraft",
+    "eaglercraft",
+    "proxy",
+    "websocket"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@thi.ng/leb128": "3.0.5",
+    "@types/node": "18.11.18",
+    "@types/semver": "7.3.13",
+    "@types/sharp": "0.31.1",
+    "@types/ws": "8.5.4",
+    "chalk": "5.2.0",
+    "dotenv": "16.0.3",
+    "minecraft-protocol": "^1.26.5",
+    "node-fetch": "3.3.1",
+    "parse-domain": "7.0.1",
+    "prismarine-auth": "^2.7.0",
+    "prismarine-block": "1.16.3",
+    "prismarine-chunk": "1.33.0",
+    "prismarine-registry": "1.6.0",
+    "semver": "^7.6.3",
+    "sharp": "^0.33.5",
+    "ws": "^8.18.1"
+  },
+  "overrides": {
+    "axios": "^1.8.2"
+  },
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^5.0.4"
+  }
+}

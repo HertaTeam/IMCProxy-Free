@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# Main config: auto-generated on first start, personal, never commit
+config.json
+config.local.json
+config/
+
+# Backup folder: config / credential snapshots, local only
+backup/
+.migrate-backup-*/
+.rollback-backup-*/
+
+# Scratch profiles from local recon scripts
+recon/edge-profile/
+recon/test-profile/
+
+# Credential files written by the in-game automation
+game-account.txt
+game-account*.txt
+
+logs/
