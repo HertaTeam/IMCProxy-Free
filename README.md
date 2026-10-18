@@ -80,4 +80,4 @@ npm run start
 
 - [Eaglercraft](https://github.com/lax1dude/eaglerxserver) - Eaglercraft 服务器实现
 - [minecraft-protocol](https://github.com/PrismarineJS/node-minecraft-protocol) - Minecraft 协议库
-- 爱来自YeeYeer132/Eaglercraft-Reverse-Proxy(已关库跑路)
+- 爱来自某人/Eaglercraft-Reverse-Proxy(已关库跑路)
