@@ -3,12 +3,17 @@ import { ConsoleCommands } from "./ConsoleCommands.js";
 import { GameAutomation } from "./GameAutomation.js";
 import { consoleUi } from "./ConsoleUi.js";
 import { ensureBackupDir } from "./Backup.js";
+import { printBanner } from "./Banner.js";
+import { startAnnounce } from "./Announce.js";
 import { getConfig, getConsoleConfig, getAutomationConfig, getConfigFilePath } from "./config.js";
 import { Logger, verboseLogging, color, startRunLog, closeRunLog, getLogFilePath, writeLogLine } from "../logger.js";
 
 const logger = new Logger("Launcher");
 
 async function main() {
+  // 先打启动横幅（ASCII art），刻意不走 logger：不然每行都会带时间戳前缀
+  printBanner();
+
   // 一开始就打开本次运行的日志文件：logs/logs-<时间戳>.txt
   // 放在读配置之前，这样连「配置加载失败」这类早期日志也能留下来
   const logFile = startRunLog();
@@ -49,6 +54,9 @@ async function main() {
   // 先把控制台挂起来：即使后面代理端口被占用启动失败，/help 等命令依然可用。
   consoleCommands.start();
   if (consoleConfig.autoHelp) consoleCommands.printHelp();
+
+  // 公告刷屏：控制台 + 游戏内聊天栏，每 3 秒一次
+  startAnnounce(proxy);
 
 
 

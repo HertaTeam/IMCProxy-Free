@@ -248,6 +248,23 @@ export class ReverseProxy extends EventEmitter {
     return this.setPacketLogging(!this.packetLogging);
   }
 
+  /**
+   * 给所有在线玩家的聊天栏发一条系统消息（公告刷屏用）。
+   * 返回成功送达到几个客户端。
+   */
+  broadcastChat(text: string): number {
+    let sent = 0;
+    for (const hooks of this.playerHooks.values()) {
+      try {
+        hooks.sendToClient(text);
+        sent++;
+      } catch {
+        /* 单个玩家发送失败不影响其他人 */
+      }
+    }
+    return sent;
+  }
+
   /** 客户端上要显示成什么名字（nameprotect）；空串表示不改名 */
   private resolveDisplayName(): string {
     const np = this.nameProtectOptions;
