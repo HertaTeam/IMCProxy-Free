@@ -6,6 +6,10 @@
 
 在增加反作弊和增加氪金玩家无敌之间选择了删除玩家
 
+傻逼imc修复了个几把 我分分钟给你破了
+
+使用Spam耀武扬威的司马了
+
 ## 功能
 
 - 将 Minecraft TCP 协议转换为 Eaglercraft WebSocket 协议

@@ -48,6 +48,14 @@ export interface ReverseProxyConfig {
   tcpHost: string;
   tcpPort: number;
   eaglerServer: string;
+  /**
+   * 连上游时带的 Origin 头。
+   * EaglercraftXServer 会检查它：不带就被当成"非法客户端"踢掉
+   * （提示「请使用正确的Eaglercraft客户端连接本服务器」）。
+   */
+  eaglerOrigin?: string;
+  /** 上游校验用浏览器 User-Agent */
+  eaglerUserAgent?: string;
   maxPlayers: number;
   defaultSkinId: number;
   debug: boolean;
@@ -368,6 +376,8 @@ export class ReverseProxy extends EventEmitter {
       username: upstreamUsername,
       skinType: ReverseEnums.SkinType.BUILTIN,
       skinData: this.config.defaultSkinId,
+      origin: this.config.eaglerOrigin,
+      userAgent: this.config.eaglerUserAgent,
     });
     this.pendingPlayers.set(realUsername, { eaglerClient, mcClient });
 

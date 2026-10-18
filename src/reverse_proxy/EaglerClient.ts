@@ -12,6 +12,13 @@ export interface EaglerClientOptions {
   username: string;
   skinType?: ReverseEnums.SkinType;
   skinData?: Buffer | number;
+  /**
+   * WebSocket 握手时带的 Origin 头。
+   * 部分服务器（EaglercraftXServer）会检查它，只放行官方网页客户端，否则踢人。
+   */
+  origin?: string;
+  /** WebSocket 握手时带的 User-Agent */
+  userAgent?: string;
 }
 
 export interface HandshakeResult {
@@ -29,6 +36,8 @@ export class EaglerClient extends EventEmitter {
   private wsUrl: string;
   private skinType: ReverseEnums.SkinType;
   private skinData: Buffer | number;
+  private origin: string;
+  private userAgent: string;
 
   public uuid: string = "";
   public appliedUsername: string = "";
@@ -43,6 +52,8 @@ export class EaglerClient extends EventEmitter {
     this.wsUrl = options.wsUrl;
     this.skinType = options.skinType ?? ReverseEnums.SkinType.BUILTIN;
     this.skinData = options.skinData ?? 0;
+    this.origin = options.origin?.trim() ?? "";
+    this.userAgent = options.userAgent?.trim() ?? "";
   }
 
   async connect(): Promise<HandshakeResult> {
@@ -66,7 +77,16 @@ export class EaglerClient extends EventEmitter {
 
       this.state = ReverseEnums.ConnectionState.HANDSHAKING;
       this.logger.info(`Connecting to ${this.wsUrl}...`);
-      this.ws = new WebSocket(this.wsUrl);
+
+      // 握手头：服务器可能会校验 Origin / User-Agent（不带就被当成"非法客户端"踢掉）
+      const headers: Record<string, string> = {};
+      if (this.origin) headers.Origin = this.origin;
+      if (this.userAgent) headers["User-Agent"] = this.userAgent;
+      if (Object.keys(headers).length > 0) {
+        this.logger.debug(`WS headers: ${JSON.stringify(headers)}`);
+      }
+
+      this.ws = new WebSocket(this.wsUrl, Object.keys(headers).length ? { headers } : undefined);
 
       connectionTimer = setTimeout(() => {
         const err = new Error("WebSocket connection timed out");

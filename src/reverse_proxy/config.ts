@@ -54,6 +54,10 @@ export interface FileConfig {
   tcpHost?: string;
   tcpPort?: number;
   eaglerServer?: string;
+  /** 连上游时带的 Origin 头（部分服务器不带就踢人） */
+  eaglerOrigin?: string;
+  /** 连上游时带的浏览器 User-Agent */
+  eaglerUserAgent?: string;
   maxPlayers?: number;
   defaultSkinId?: number;
   debug?: boolean;
@@ -65,10 +69,12 @@ export interface FileConfig {
 
 /* ------------------------------------------------------------ 默认值 */
 
-export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort" | "eaglerServer" | "maxPlayers" | "defaultSkinId" | "debug">> = {
+export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort" | "eaglerServer" | "eaglerOrigin" | "eaglerUserAgent" | "maxPlayers" | "defaultSkinId" | "debug">> = {
   tcpHost: "0.0.0.0",
   tcpPort: 25565,
   eaglerServer: "wss://mc.smgoro.com",
+  eaglerOrigin: "https://ws.imc.re",
+  eaglerUserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
   maxPlayers: 1,
   defaultSkinId: 0,
   debug: true,
@@ -174,6 +180,8 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
   "tcpHost": "0.0.0.0",              // Minecraft 客户端连接的监听地址
   "tcpPort": 25565,                  // 监听端口；被占用时改这里或设 REVERSE_PROXY_PORT
   "eaglerServer": "wss://mc.smgoro.com",  // 上游 Eaglercraft (WebSocket) 服务器
+  "eaglerOrigin": "https://ws.imc.re",    // 上游校验用 Origin；不带可能被踢出
+  "eaglerUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36", // 上游校验用浏览器 UA
   "maxPlayers": 1,                   // 同时允许几个玩家连接
   "defaultSkinId": 0,                // 默认皮肤 ID
   "debug": true,                     // 详细日志（等价于 DEBUG 环境变量）
@@ -441,6 +449,8 @@ export function loadConfigFromEnv(): Partial<ReverseProxyConfig> {
     tcpHost: process.env.REVERSE_PROXY_HOST,
     tcpPort: process.env.REVERSE_PROXY_PORT ? parseInt(process.env.REVERSE_PROXY_PORT) : undefined,
     eaglerServer: process.env.EAGLER_SERVER_URL,
+    eaglerOrigin: process.env.EAGLER_ORIGIN,
+    eaglerUserAgent: process.env.EAGLER_USER_AGENT,
     maxPlayers: process.env.MAX_PLAYERS ? parseInt(process.env.MAX_PLAYERS) : undefined,
     randomIdMode,
     randomIdLength: process.env.RANDOM_ID_LENGTH ? parseInt(process.env.RANDOM_ID_LENGTH) : undefined,
@@ -508,6 +518,8 @@ export function getNameProtectConfig(): NameProtectConfig {
     tcpHost: envConfig.tcpHost ?? file.tcpHost ?? DEFAULT_FILE_CONFIG.tcpHost,
     tcpPort: envConfig.tcpPort ?? file.tcpPort ?? DEFAULT_FILE_CONFIG.tcpPort,
     eaglerServer: envConfig.eaglerServer ?? file.eaglerServer ?? DEFAULT_FILE_CONFIG.eaglerServer,
+    eaglerOrigin: envConfig.eaglerOrigin ?? file.eaglerOrigin ?? DEFAULT_FILE_CONFIG.eaglerOrigin,
+    eaglerUserAgent: envConfig.eaglerUserAgent ?? file.eaglerUserAgent ?? DEFAULT_FILE_CONFIG.eaglerUserAgent,
     maxPlayers: envConfig.maxPlayers ?? file.maxPlayers ?? DEFAULT_FILE_CONFIG.maxPlayers,
     defaultSkinId: file.defaultSkinId ?? DEFAULT_FILE_CONFIG.defaultSkinId,
     randomIdMode: envConfig.randomIdMode ?? randomId.mode,
