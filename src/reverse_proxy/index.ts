@@ -41,6 +41,12 @@ async function main() {
     "nameprotect",
     config.nameProtect?.enabled ? `enabled (display as "${config.nameProtect.name}")` : "disabled"
   );
+  logger.kv(
+    "anti-cheat",
+    config.antiCheat?.enabled
+      ? `enabled (reference only: console=${config.antiCheat.console} chat=${config.antiCheat.inGameChat})`
+      : "disabled"
+  );
   logger.info("");
 
   const automation = automationConfig.enabled ? new GameAutomation(automationConfig) : null;

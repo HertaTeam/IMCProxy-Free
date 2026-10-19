@@ -4,6 +4,7 @@ import { ReverseProxyConfig } from "./ReverseProxy.js";
 import { parseRandomIdMode, normalizeRandomIdLength } from "./RandomId.js";
 import { Logger } from "../logger.js";
 import { backupFile } from "./Backup.js";
+import type { AntiCheatConfig } from "./anticheat/core.js";
 
 const logger = new Logger("Config");
 
@@ -65,6 +66,7 @@ export interface FileConfig {
   console?: Partial<ConsoleConfig>;
   automation?: Partial<AutomationConfig>;
   nameProtect?: Partial<NameProtectConfig>;
+  antiCheat?: Partial<AntiCheatConfig>;
 }
 
 /* ------------------------------------------------------------ 默认值 */
@@ -198,6 +200,38 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
     "autoHelp": false,               // 启动时自动打印命令列表（默认关，自己敲 /help）
     "autoStatus": false,             // 启动时自动打印一次账号状态
     "echo": true                     // true = 自己接管输入并回显；false = 交给终端回显
+  },
+
+  // ---------------- 反作弊（参考型：只告警，不踢人、不改包） ----------------
+  // 告警同时输出到 imcp 控制台和玩家游戏内聊天栏；控制台用 /anticheat 查看。
+  "antiCheat": {
+    "enabled": true,
+    "threshold": 1.0,                // 移动容差（方块）
+    "latency": 600,                  // 延迟补偿（ms），SpeedC 用
+    "vlClearTicks": 6000,            // 每多少 tick 清一次违规计数；-1 = 不清
+    "alertBuffer": true,             // true = 按各检查的 buffer 累积后告警
+    "experimental": false,           // 实验性检查：ReachA / MotionA / ScaffoldA
+    "console": true,
+    "inGameChat": true,
+    "checks": {
+      "AutoBlockA": true,
+      "AutoClickerA": true,
+      "NoSlowA": true,
+      "ReachA": false,
+      "BlinkA": true,
+      "FlyA": true,
+      "GroundSpoofA": true,
+      "GroundSpoofB": true,
+      "MotionA": false,
+      "NoFallA": true,
+      "SpeedA": true,
+      "SpeedB": true,
+      "SpeedC": true,
+      "ScaffoldA": false,
+      "ScaffoldB": true,
+      "ScaffoldC": true,
+      "Simulation": true
+    }
   },
 
   // ------------------------ 游戏内自动化 ------------------------
@@ -525,6 +559,17 @@ export function getNameProtectConfig(): NameProtectConfig {
     randomIdMode: envConfig.randomIdMode ?? randomId.mode,
     randomIdLength: normalizeRandomIdLength(envConfig.randomIdLength ?? randomId.length),
     debug: envConfig.debug ?? file.debug ?? DEFAULT_FILE_CONFIG.debug,
+    antiCheat: {
+      enabled: file.antiCheat?.enabled ?? true,
+      threshold: file.antiCheat?.threshold ?? 1.0,
+      latency: file.antiCheat?.latency ?? 600,
+      vlClearTicks: file.antiCheat?.vlClearTicks ?? 6000,
+      alertBuffer: file.antiCheat?.alertBuffer ?? true,
+      experimental: file.antiCheat?.experimental ?? false,
+      console: file.antiCheat?.console ?? true,
+      inGameChat: file.antiCheat?.inGameChat ?? true,
+      checks: { ...(file.antiCheat?.checks ?? {}) },
+    },
     nameProtect: getNameProtectConfig(),
   };
 }

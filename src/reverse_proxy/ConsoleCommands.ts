@@ -12,6 +12,7 @@ import {
   listConfigKeys,
 } from "./config.js";
 import { backupFiles, backupDir, defaultBackupTargets, listBackups } from "./Backup.js";
+import type { AntiCheatConfig } from "./anticheat/core.js";
 
 export interface ConsoleCommandTarget {
   resetRandomId(): string;
@@ -21,6 +22,14 @@ export interface ConsoleCommandTarget {
   getPlayerCount(): number;
   setPacketLogging(enabled: boolean): boolean;
   togglePacketLogging(): boolean;
+  /** 反作弊状态快照（未启用时 enabled=false, config=null） */
+  antiCheatStatus(): {
+    enabled: boolean;
+    config: AntiCheatConfig | null;
+    players: Array<{ player: string; violations: Record<string, number> }>;
+  };
+  /** 清空违规计数 */
+  antiCheatReset(): boolean;
 }
 
 const ID_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
@@ -32,6 +41,7 @@ const CONSOLE_COMMANDS = [
   "log", "debug",
   "config", "cfg",
   "backup",
+  "anticheat", "ac",
   "help",
 ];
 
@@ -204,6 +214,11 @@ export class ConsoleCommands {
       case "config":
       case "cfg":
         this.configCommand(argument);
+        break;
+
+      case "anticheat":
+      case "ac":
+        this.antiCheatCommand(argument);
         break;
 
       case "help":
@@ -403,6 +418,64 @@ export class ConsoleCommands {
     this.logger.warn(`Unknown subcommand "${sub}". Try /config, /config keys, /config get <key>, /config set <key> <value>`);
   }
 
+  /** /anticheat [status|reset|checks] */
+  private antiCheatCommand(argument: string): void {
+    const sub = argument.trim().toLowerCase();
+    const status = this.target.antiCheatStatus();
+
+    if (!status.enabled || !status.config) {
+      this.logger.warn("Anti-cheat is disabled (config.json -> antiCheat.enabled = false).");
+      return;
+    }
+
+    if (sub === "reset") {
+      this.target.antiCheatReset();
+      this.logger.info("Anti-cheat violation counters cleared.");
+      return;
+    }
+
+    const cfg = status.config;
+
+    if (sub === "checks") {
+      this.logger.section("Anti-cheat checks");
+      const toggles = cfg.checks ?? {};
+      for (const name of Object.keys(toggles).sort()) {
+        const on = toggles[name as keyof typeof toggles];
+        this.logger.info(`  ${color.cyan(name.padEnd(14))} ${on ? color.green("on") : color.gray("off")}`);
+      }
+      this.logger.info(`  ${color.gray("Enable more with /config set antiCheat.checks.<Name> true")}`);
+      return;
+    }
+
+    this.logger.section("Anti-cheat");
+    this.logger.kv("enabled", cfg.enabled);
+    this.logger.kv("experimental", cfg.experimental);
+    this.logger.kv("threshold", cfg.threshold);
+    this.logger.kv("latency", `${cfg.latency}ms`);
+    this.logger.kv("alert buffer", cfg.alertBuffer);
+    this.logger.kv("vl clear", cfg.vlClearTicks > 0 ? `${cfg.vlClearTicks} ticks` : "never");
+    this.logger.kv("output", `console=${cfg.console} chat=${cfg.inGameChat}`);
+
+    if (status.players.length === 0) {
+      this.logger.info("");
+      this.logger.info("  No players online.");
+      return;
+    }
+
+    for (const entry of status.players) {
+      this.logger.info("");
+      this.logger.info(`  ${color.cyan(entry.player)}`);
+      const names = Object.keys(entry.violations);
+      if (names.length === 0) {
+        this.logger.kv("  violations", "(none)");
+        continue;
+      }
+      for (const name of names) {
+        this.logger.kv(`  ${name}`, `VL ${entry.violations[name]}`);
+      }
+    }
+  }
+
   printConfig(): void {
     const c = getConfig();
     const cc = getConsoleConfig();
@@ -443,6 +516,15 @@ export class ConsoleCommands {
     this.logger.kv("  targets", `playlist=${np?.playlist} chat=${np?.chat} scoreboard=${np?.scoreboard}`);
 
     this.logger.info("");
+    this.logger.info(`  ${color.gray("anti-cheat")}`);
+    const acfg = c.antiCheat;
+    this.logger.kv("  enabled", acfg?.enabled ?? false);
+    this.logger.kv("  experimental", acfg?.experimental ?? false);
+    this.logger.kv("  threshold", acfg?.threshold ?? "-");
+    this.logger.kv("  latency", acfg?.latency != null ? `${acfg.latency}ms` : "-");
+    this.logger.kv("  output", `console=${acfg?.console} chat=${acfg?.inGameChat}`);
+
+    this.logger.info("");
     this.logger.info(`  ${color.gray("Use /config set <key> <value> to change a value, then restart.")}`);
   }
 
@@ -459,6 +541,11 @@ export class ConsoleCommands {
     this.logger.info("  /config keys                      list every editable key");
     this.logger.info("  /config get <key>                 show one value");
     this.logger.info("  /config set <key> <value>         change it and save (restart to apply)");
+    this.logger.info("");
+    this.logger.info("  anti-cheat (reference only, never kicks):");
+    this.logger.info("  /anticheat /ac                    status + per-player violations");
+    this.logger.info("  /anticheat checks                 list every check and its toggle");
+    this.logger.info("  /anticheat reset                  clear violation counters");
     this.logger.info("");
     this.logger.info("  backup (folder is in .gitignore):");
     this.logger.info("  /backup [label]                   snapshot config + credentials into backup/");
