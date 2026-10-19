@@ -19,6 +19,29 @@ export interface ConsoleConfig {
   echo: boolean;
 }
 
+/** 公告刷屏（控制台 + 游戏内聊天栏） */
+export interface AnnounceConfig {
+  /** false = 完全不刷屏 */
+  enabled: boolean;
+  /** 刷屏间隔（毫秒），最小 1000 */
+  intervalMs: number;
+  /** 是否刷到控制台 */
+  console: boolean;
+  /** 是否刷到游戏内聊天栏 */
+  inGameChat: boolean;
+}
+
+/** 启动时和 GitHub 对比版本、提示更新 */
+export interface UpdateCheckConfig {
+  enabled: boolean;
+  /** GitHub 仓库：owner/repo */
+  repo: string;
+  /** 请求超时（毫秒） */
+  timeoutMs: number;
+  /** 发现新版本时是否也推到游戏内聊天栏 */
+  notifyInGame: boolean;
+}
+
 export interface RandomIdConfig {
   /** false 等价于 mode: "off" */
   auto: boolean;
@@ -64,6 +87,8 @@ export interface FileConfig {
   debug?: boolean;
   randomId?: Partial<RandomIdConfig> & { mode?: string };
   console?: Partial<ConsoleConfig>;
+  announce?: Partial<AnnounceConfig>;
+  updateCheck?: Partial<UpdateCheckConfig>;
   automation?: Partial<AutomationConfig>;
   nameProtect?: Partial<NameProtectConfig>;
   antiCheat?: Partial<AntiCheatConfig>;
@@ -84,6 +109,13 @@ export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort
 
 const DEFAULT_RANDOM_ID: RandomIdConfig = { auto: true, mode: "startup", length: 8 };
 const DEFAULT_CONSOLE: ConsoleConfig = { autoHelp: false, autoStatus: false, echo: true };
+const DEFAULT_ANNOUNCE: AnnounceConfig = { enabled: true, intervalMs: 10000, console: true, inGameChat: true };
+const DEFAULT_UPDATE_CHECK: UpdateCheckConfig = {
+  enabled: true,
+  repo: "HertaTeam/IMCProxy-Free",
+  timeoutMs: 6000,
+  notifyInGame: true,
+};
 const DEFAULT_AUTOMATION: AutomationConfig = {
   enabled: true,
   gameAccountFile: "game-account.txt",
@@ -200,6 +232,26 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
     "autoHelp": false,               // 启动时自动打印命令列表（默认关，自己敲 /help）
     "autoStatus": false,             // 启动时自动打印一次账号状态
     "echo": true                     // true = 自己接管输入并回显；false = 交给终端回显
+  },
+
+  // ---------------------------- 公告刷屏 ----------------------------
+  // 控制台 + 游戏内聊天栏循环推送项目公告。
+  // 想关掉就把 enabled 改成 false；嫌慢/嫌快就改 intervalMs（毫秒，最小 1000）。
+  "announce": {
+    "enabled": true,                 // false = 完全不刷屏
+    "intervalMs": 10000,             // 刷屏间隔：默认 10 秒
+    "console": true,                 // 是否刷到控制台
+    "inGameChat": true               // 是否刷到游戏内聊天栏
+  },
+
+  // ---------------------------- 更新提示 ----------------------------
+  // 启动时把本地 version.json 的 editDate 和 GitHub 上的比，
+  // 不一致就提示更新；取不到就静默跳过（断网不影响使用）。
+  "updateCheck": {
+    "enabled": true,                 // false = 不检查更新
+    "repo": "HertaTeam/IMCProxy-Free", // GitHub 仓库 owner/repo
+    "timeoutMs": 6000,               // 单次请求超时
+    "notifyInGame": true             // 发现新版本时也推到游戏内聊天栏
   },
 
   // ---------------- 反作弊（参考型：只告警，不踢人、不改包） ----------------
@@ -515,6 +567,28 @@ export function getConsoleConfig(): ConsoleConfig {
     autoHelp: file.autoHelp ?? DEFAULT_CONSOLE.autoHelp,
     autoStatus: file.autoStatus ?? DEFAULT_CONSOLE.autoStatus,
     echo: file.echo ?? DEFAULT_CONSOLE.echo,
+  };
+}
+
+export function getAnnounceConfig(): AnnounceConfig {
+  const file = loadFileConfig().announce ?? {};
+  const interval = Number(file.intervalMs ?? DEFAULT_ANNOUNCE.intervalMs);
+  return {
+    enabled: file.enabled ?? DEFAULT_ANNOUNCE.enabled,
+    intervalMs: Number.isFinite(interval) && interval >= 1000 ? interval : DEFAULT_ANNOUNCE.intervalMs,
+    console: file.console ?? DEFAULT_ANNOUNCE.console,
+    inGameChat: file.inGameChat ?? DEFAULT_ANNOUNCE.inGameChat,
+  };
+}
+
+export function getUpdateCheckConfig(): UpdateCheckConfig {
+  const file = loadFileConfig().updateCheck ?? {};
+  const timeout = Number(file.timeoutMs ?? DEFAULT_UPDATE_CHECK.timeoutMs);
+  return {
+    enabled: file.enabled ?? DEFAULT_UPDATE_CHECK.enabled,
+    repo: typeof file.repo === "string" && file.repo.includes("/") ? file.repo : DEFAULT_UPDATE_CHECK.repo,
+    timeoutMs: Number.isFinite(timeout) && timeout >= 1000 ? timeout : DEFAULT_UPDATE_CHECK.timeoutMs,
+    notifyInGame: file.notifyInGame ?? DEFAULT_UPDATE_CHECK.notifyInGame,
   };
 }
 

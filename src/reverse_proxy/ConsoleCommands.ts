@@ -4,6 +4,8 @@ import { consoleUi } from "./ConsoleUi.js";
 import {
   getConfig,
   getConsoleConfig,
+  getAnnounceConfig,
+  getUpdateCheckConfig,
   getAutomationConfig,
   getConfigFilePath,
   setConfigValue,
@@ -11,6 +13,7 @@ import {
   parseConfigValue,
   listConfigKeys,
 } from "./config.js";
+import { checkForUpdates, loadVersionState, VERSION_FILE } from "./UpdateCheck.js";
 import { backupFiles, backupDir, defaultBackupTargets, listBackups } from "./Backup.js";
 import type { AntiCheatConfig } from "./anticheat/core.js";
 
@@ -42,6 +45,7 @@ const CONSOLE_COMMANDS = [
   "config", "cfg",
   "backup",
   "anticheat", "ac",
+  "update",
   "help",
 ];
 
@@ -219,6 +223,10 @@ export class ConsoleCommands {
       case "anticheat":
       case "ac":
         this.antiCheatCommand(argument);
+        break;
+
+      case "update":
+        this.updateCommand(argument);
         break;
 
       case "help":
@@ -477,6 +485,31 @@ export class ConsoleCommands {
     }
   }
 
+  /** /update [status] —— 手动检查 GitHub 上的版本 */
+  private updateCommand(argument: string): void {
+    const sub = argument.trim().toLowerCase();
+    const state = loadVersionState();
+    const config = getUpdateCheckConfig();
+
+    this.logger.section("Update");
+    this.logger.kv("Version file", VERSION_FILE);
+    this.logger.kv("Edit date", state.editDate);
+    this.logger.kv("Launches today", state.count);
+    if (state.lastCheck) this.logger.kv("Last check", state.lastCheck);
+    if (state.remoteEditDate) this.logger.kv("Remote edit date", state.remoteEditDate);
+    this.logger.kv("Repo", `github.com/${config.repo}`);
+    this.logger.kv("Enabled", config.enabled);
+
+    if (sub === "status") return;
+
+    this.logger.info("Checking...");
+    void checkForUpdates(config).then((result) => {
+      if (result.status === "outdated") this.logger.warn(result.message);
+      else if (result.status === "up-to-date") this.logger.info(result.message);
+      else this.logger.warn(result.message);
+    });
+  }
+
   printConfig(): void {
     const c = getConfig();
     const cc = getConsoleConfig();
@@ -498,6 +531,22 @@ export class ConsoleCommands {
     this.logger.kv("  autoHelp", cc.autoHelp);
     this.logger.kv("  autoStatus", cc.autoStatus);
     this.logger.kv("  echo", cc.echo);
+
+    this.logger.info("");
+    this.logger.info(`  ${color.gray("announce")}`);
+    const ann = getAnnounceConfig();
+    this.logger.kv("  enabled", ann.enabled);
+    this.logger.kv("  interval", `${ann.intervalMs}ms`);
+    this.logger.kv("  targets", `console=${ann.console} chat=${ann.inGameChat}`);
+
+    this.logger.info("");
+    this.logger.info(`  ${color.gray("update check")}`);
+    const uc = getUpdateCheckConfig();
+    const vstate = loadVersionState();
+    this.logger.kv("  enabled", uc.enabled);
+    this.logger.kv("  repo", `github.com/${uc.repo}`);
+    this.logger.kv("  edit date", vstate.editDate);
+    this.logger.kv("  launches today", vstate.count);
 
     this.logger.info("");
     this.logger.info(`  ${color.gray("automation")}`);
@@ -547,6 +596,10 @@ export class ConsoleCommands {
     this.logger.info("  /anticheat /ac                    status + per-player violations");
     this.logger.info("  /anticheat checks                 list every check and its toggle");
     this.logger.info("  /anticheat reset                  clear violation counters");
+    this.logger.info("");
+    this.logger.info("  update:");
+    this.logger.info("  /update                           check GitHub for a newer version");
+    this.logger.info("  /update status                    show local version info only");
     this.logger.info("");
     this.logger.info("  backup (folder is in .gitignore):");
     this.logger.info("  /backup [label]                   snapshot config + credentials into backup/");

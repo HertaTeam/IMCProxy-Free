@@ -5,7 +5,15 @@ import { consoleUi } from "./ConsoleUi.js";
 import { ensureBackupDir } from "./Backup.js";
 import { printBanner } from "./Banner.js";
 import { startAnnounce } from "./Announce.js";
-import { getConfig, getConsoleConfig, getAutomationConfig, getConfigFilePath } from "./config.js";
+import { bumpDailyCount, checkForUpdates, formatNotice } from "./UpdateCheck.js";
+import {
+  getConfig,
+  getConsoleConfig,
+  getAnnounceConfig,
+  getUpdateCheckConfig,
+  getAutomationConfig,
+  getConfigFilePath,
+} from "./config.js";
 import { Logger, verboseLogging, color, startRunLog, closeRunLog, getLogFilePath, writeLogLine } from "../logger.js";
 
 const logger = new Logger("Launcher");
@@ -34,6 +42,11 @@ async function main() {
   logger.kv("Debug mode", config.debug);
   logger.kv("Console", `autoHelp=${consoleConfig.autoHelp} autoStatus=${consoleConfig.autoStatus} echo=${consoleConfig.echo}`);
 
+  // 版本：当日启动次数 +1（跨天清零），并把 editDate 打出来
+  const updateConfig = getUpdateCheckConfig();
+  const versionState = bumpDailyCount();
+  logger.kv("Version", `${versionState.editDate} (${versionState.count} launch(es) today)`);
+
   logger.section("Features");
   logger.kv("In-game automation", automationConfig.enabled ? "enabled" : "disabled");
   logger.kv("Game account file", automationConfig.gameAccountFile);
@@ -61,8 +74,21 @@ async function main() {
   consoleCommands.start();
   if (consoleConfig.autoHelp) consoleCommands.printHelp();
 
-  // 公告刷屏：控制台 + 游戏内聊天栏，每 3 秒一次
-  startAnnounce(proxy);
+  // 公告刷屏：控制台 + 游戏内聊天栏（间隔与开关见 config.json -> announce）
+  startAnnounce(proxy, getAnnounceConfig());
+
+  // 更新提示：和 GitHub 上的 version.json 比 editDate（取不到就静默跳过）
+  void checkForUpdates(updateConfig, (result) => {
+    if (!updateConfig.notifyInGame) return;
+    try {
+      proxy.broadcastChat(formatNotice(result));
+    } catch {
+      /* 没有在线玩家，忽略 */
+    }
+  }).then((result) => {
+    if (result.status === "up-to-date") logger.info(result.message);
+    else if (result.status === "unknown") logger.debug(result.message);
+  });
 
 
 

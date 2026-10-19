@@ -1,49 +1,51 @@
-// 验证公告刷屏：控制台每 3 秒一次 + 进服后游戏内聊天栏也能收到
+// 公告刷屏：间隔应为 10 秒；enabled=false 时应完全不刷
 import { spawn } from 'node:child_process';
-import mc from 'minecraft-protocol';
+import { startAnnounce } from '../build/reverse_proxy/Announce.js';
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- A. 默认配置：10 秒一次 ----
 const proxy = spawn(process.execPath, ['build/reverse_proxy/index.js'], {
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, IMC_AUTO_LOGIN: 'off', IMC_BROWSER_LOGIN: 'off', IRC_AUTO_LOGIN: 'off' },
+  env: { ...process.env, IMC_AUTO_LOGIN: 'off', IMC_BROWSER_LOGIN: 'off', IRC_AUTO_LOGIN: 'off', DEBUG: 'false' },
 });
+let out = '';
+proxy.stdout.on('data', (d) => (out += d.toString()));
+proxy.stderr.on('data', (d) => (out += d.toString()));
 
-let consoleOut = '';
-proxy.stdout.on('data', (d) => (consoleOut += d.toString()));
-proxy.stderr.on('data', (d) => (consoleOut += d.toString()));
-
-await new Promise((r) => setTimeout(r, 2500));
-
-const chats = [];
-const client = mc.createClient({
-  host: '127.0.0.1',
-  port: 25565,
-  username: 'SpamTest',
-  version: '1.8.9',
-  auth: 'offline',
-});
-client.on('chat', (p) => {
-  const text = typeof p.message === 'string' ? p.message : JSON.stringify(p.message);
-  chats.push(text);
-});
-client.on('error', () => {});
-client.on('end', () => {});
-
-await new Promise((r) => setTimeout(r, 9000));
-
-try { client.end(); } catch {}
-await new Promise((r) => setTimeout(r, 300));
+await sleep(12500);
 try { proxy.kill(); } catch {}
-await new Promise((r) => setTimeout(r, 300));
+await sleep(400);
 
-const clean = consoleOut.replace(/\u001b\[[0-9;]*m/g, '');
-const noticeLines = clean.split(/\r?\n/).filter((l) => l.includes('暂停制作新内容') || l.includes('1131093494'));
+const clean = out.replace(/\u001b\[[0-9;]*m/g, '');
+const hits = clean.split(/\r?\n/).filter((l) => l.includes('本项目已暂停制作新内容'));
+const times = hits.map((l) => l.slice(0, 8));
+const seconds = times.map((t) => {
+  const [h, m, s] = t.split(':').map(Number);
+  return h * 3600 + m * 60 + s;
+});
+const gaps = [];
+for (let i = 1; i < seconds.length; i++) gaps.push(seconds[i] - seconds[i - 1]);
 
-console.log('===== 控制台刷屏 =====');
-console.log(`  命中公告行数: ${noticeLines.length}`);
-noticeLines.slice(0, 8).forEach((l) => console.log('  ' + l.trim()));
+console.log('===== A. 默认配置（announce.enabled=true, intervalMs=10000）=====');
+console.log('  公告次数:', hits.length);
+console.log('  时间点:', times.join(' '));
+console.log('  间隔(秒):', gaps.join(' '));
+const intervalLine = clean.split(/\r?\n/).find((l) => l.includes('Announce spam every'));
+console.log('  启动提示:', intervalLine ? intervalLine.trim().slice(0, 90) : '(无)');
 
-console.log('===== 游戏内聊天栏 =====');
-console.log(`  收到聊天包: ${chats.length}`);
-[...new Set(chats)].slice(0, 6).forEach((c) => console.log('  ' + c.slice(0, 120)));
+// ---- B. 关闭刷屏 ----
+const calls = [];
+const stub = { broadcastChat: (t) => calls.push(t) };
+const timer = startAnnounce(stub, { enabled: false, intervalMs: 10000, console: false, inGameChat: true });
+await sleep(400);
+if (timer) clearInterval(timer);
 
-process.exit(0);
+console.log('===== B. announce.enabled = false =====');
+console.log('  startAnnounce 返回:', timer === null ? 'null（未启动）' : '定时器（错误）');
+console.log('  推送次数:', calls.length);
+
+const intervalOk = hits.length >= 2 && gaps.every((g) => g >= 9 && g <= 11);
+const disabledOk = timer === null && calls.length === 0;
+console.log(`===== A: ${intervalOk ? 'PASS' : 'FAIL'}   B: ${disabledOk ? 'PASS' : 'FAIL'} =====`);
+process.exit(intervalOk && disabledOk ? 0 : 1);
