@@ -448,6 +448,7 @@ export class ConsoleCommands {
     }
 
     this.logger.section("Anti-cheat");
+    this.logger.kv("target", "other players (the local player is not checked)");
     this.logger.kv("enabled", cfg.enabled);
     this.logger.kv("experimental", cfg.experimental);
     this.logger.kv("threshold", cfg.threshold);
@@ -458,7 +459,7 @@ export class ConsoleCommands {
 
     if (status.players.length === 0) {
       this.logger.info("");
-      this.logger.info("  No players online.");
+      this.logger.info("  No other players tracked yet (the world must contain other players).");
       return;
     }
 

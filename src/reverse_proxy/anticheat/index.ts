@@ -1,8 +1,13 @@
 /**
- * 反作弊总入口：把代理双向封包喂给移植过来的检查。
+ * 反作弊总入口 —— 检测目标是**服务器上的其他玩家**（和原版 ravenxd Anticheat 一致），
+ * 不是走代理的这位玩家自己。
  *
- * 只做"参考显示"：违规会同时输出到 imcp 控制台和玩家游戏内聊天栏，
- * 但**不会**踢人、不会改包。
+ * 数据来源全部是服务端 → 客户端的实体封包：
+ *   named_entity_spawn / rel_entity_move / entity_move_look / entity_teleport / entity_look
+ *   entity_metadata（疾跑·潜行·使用物品标志）/ animation（挥手）/ entity_status（受伤）
+ *   player_info（uuid → 名字）/ entity_destroy / respawn
+ *
+ * 告警同时输出到 imcp 控制台和本机玩家聊天栏；**不踢人、不改包**。
  */
 import mcp from "minecraft-protocol";
 import { Logger, color } from "../../logger.js";
@@ -21,23 +26,51 @@ import { registerAllChecks } from "./checks.js";
 
 const { createDeserializer, states } = mcp;
 
-/** 每个玩家的运行时状态 */
-interface PlayerSession {
+/** 其他玩家的运行时会话 */
+interface TrackedPlayer {
+  entityId: number;
+  uuid: string;
+  name: string;
   player: TRPlayer;
   gates: CheckGates;
   toggles: Record<string, boolean>;
   checks: ReturnType<typeof registerAllChecks>;
-  ticker: NodeJS.Timeout;
-  /** 挥手动效剩余 tick（1.8 的 isSwingInProgress 会持续几 tick） */
+  /** 服务端下发的位置（也是 TRPlayer 的输入） */
+  pos: Vec3;
+  yaw: number;
+  pitch: number;
+  onGround: boolean;
+  sprinting: boolean;
+  sneaking: boolean;
+  usingItem: boolean;
+  /** 挥手动画剩余 tick */
   swingTicks: number;
+  /** 最近一次收到移动包的时间 */
+  lastMoveAt: number;
+  /** 连续多少次移动包都被"环境不确定"跳过 */
+  skipped: number;
 }
+
+/**
+ * 其他玩家的判定阈值倍数。
+ * 原因是实体包按需下发、还可能被客户端插值，误差比本地玩家大得多，
+ * 用和本地一样的 1.0 会大量误报。
+ */
+const OTHER_THRESHOLD_MULTIPLIER = 1.5;
+
+/** 实体 metadata 里的标志位（1.8 flags：0x02 潜行 / 0x08 疾跑 / 0x10 使用物品） */
+const FLAG_SNEAKING = 0x02;
+const FLAG_SPRINTING = 0x08;
+const FLAG_USING_ITEM = 0x10;
 
 export class AntiCheatManager {
   private readonly logger = new Logger("AntiCheat");
   private readonly config: AntiCheatConfig;
   private readonly world = new WorldModel();
   private readonly entities = new EntityTracker();
-  private readonly sessions = new Map<string, PlayerSession>();
+  private readonly tracked = new Map<number, TrackedPlayer>();
+  /** uuid → 玩家名（player_info 提供） */
+  private readonly names = new Map<string, string>();
   private readonly deserializer = createDeserializer({
     state: states.PLAY,
     isServer: false, // -> toClient
@@ -46,9 +79,9 @@ export class AntiCheatManager {
     noErrorLogging: true,
   } as any);
 
-  /** 把告警送到游戏内聊天栏（由 ReverseProxy 注入） */
-  private chatSink: ((player: string, text: string) => void) | null = null;
+  private ticker: NodeJS.Timeout | null = null;
   private blocked = false;
+  private chatSink: ((player: string, text: string) => void) | null = null;
 
   constructor(config: Partial<AntiCheatConfig> = {}) {
     this.config = {
@@ -56,6 +89,8 @@ export class AntiCheatManager {
       ...config,
       checks: { ...(config.checks ?? {}) },
     };
+    this.ticker = setInterval(() => this.tickAll(), 50);
+    this.ticker.unref?.();
   }
 
   isEnabled(): boolean {
@@ -66,154 +101,48 @@ export class AntiCheatManager {
     return this.config;
   }
 
+  worldModel(): WorldModel {
+    return this.world;
+  }
+
+  /** 测试 / 调试：当前被追踪的其他玩家 */
+  trackedPlayers(): Array<{ entityId: number; name: string }> {
+    return [...this.tracked.values()].map((t) => ({ entityId: t.entityId, name: t.name }));
+  }
+
+  sessionChecks(entityId: number): ReturnType<typeof registerAllChecks> | null {
+    return this.tracked.get(entityId)?.checks ?? null;
+  }
+
+  /** 兼容旧调用：本地玩家不再参与检测 */
+  registerPlayer(_name: string): void {
+    /* no-op：检测目标是服务器上的其他玩家 */
+  }
+
+  removePlayer(_name: string): void {
+    /* no-op */
+  }
+
   setChatSink(sink: (player: string, text: string) => void): void {
     this.chatSink = sink;
   }
 
-  registerPlayer(name: string): void {
-    if (!this.config.enabled || this.sessions.has(name)) return;
-    const toggles = resolveCheckToggles(this.config);
-    const gates: CheckGates = {
-      combat: toggles.AutoBlockA || toggles.AutoClickerA || toggles.NoSlowA || toggles.ReachA,
-      movement: true,
-      scaffolding: toggles.ScaffoldA || toggles.ScaffoldB || toggles.ScaffoldC,
-      simulation: toggles.Simulation,
-      experimental: this.config.experimental,
-    };
-
-    const player = new TRPlayer(name, this.config, this.world, this.entities, (p, check, vl, extra) =>
-      this.emitAlert(p, check, vl, extra)
-    );
-    const checks = registerAllChecks(player, gates, toggles);
-    const ticker = setInterval(() => {
-      if (this.blocked) return;
-      this.entities.tick();
-      try {
-        player.tick();
-      } catch (err) {
-        this.logger.debug(`[${name}] tick failed: ${(err as Error).message}`);
-      }
-    }, 50);
-
-    this.sessions.set(name, { player, gates, toggles, checks, ticker, swingTicks: 0 });
-  }
-
-  removePlayer(name: string): void {
-    const session = this.sessions.get(name);
-    if (!session) return;
-    clearInterval(session.ticker);
-    this.sessions.delete(name);
+  setBlocked(blocked: boolean): void {
+    this.blocked = blocked;
   }
 
   shutdown(): void {
-    for (const name of [...this.sessions.keys()]) this.removePlayer(name);
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = null;
+    this.tracked.clear();
+    this.names.clear();
     this.world.reset();
     this.entities.clear();
   }
 
-  /** 某个检查分组是否至少有一个子检查开着 */
-  private toggleGroup(check: CheckName): boolean {
-    const toggles = resolveCheckToggles(this.config);
-    return toggles[check] === true;
-  }
-
-  /* ------------------------------------------------------- 客户端 → 服务端 */
-
-  handleClientPacket(name: string, packet: any, meta: any): void {
-    const session = this.sessions.get(name);
-    if (!session || !this.config.enabled) return;
-    if (!packet || typeof packet !== "object") return;
-    const state = session.player.state;
-
-    try {
-      switch (meta?.name) {
-        case "position":
-        case "position_look": {
-          if (typeof packet.x === "number" && typeof packet.y === "number" && typeof packet.z === "number") {
-            const nextPos = new Vec3(packet.x, packet.y, packet.z);
-            // 完整预测反作弊是包驱动的：一个移动包 = 一个客户端 tick
-            session.checks.simulation.onMovePacket(
-              nextPos,
-              Boolean(packet.onGround),
-              typeof packet.yaw === "number" ? packet.yaw : state.rot.yaw,
-              typeof packet.pitch === "number" ? packet.pitch : state.rot.pitch
-            );
-            state.pos = nextPos;
-          }
-          if (typeof packet.onGround === "boolean") state.onGround = packet.onGround;
-          if (typeof packet.yaw === "number") state.rot.yaw = packet.yaw;
-          if (typeof packet.pitch === "number") state.rot.pitch = packet.pitch;
-          break;
-        }
-        case "look": {
-          if (typeof packet.yaw === "number") state.rot.yaw = packet.yaw;
-          if (typeof packet.pitch === "number") state.rot.pitch = packet.pitch;
-          if (typeof packet.onGround === "boolean") state.onGround = packet.onGround;
-          break;
-        }
-        case "flying": {
-          if (typeof packet.onGround === "boolean") state.onGround = packet.onGround;
-          break;
-        }
-        case "entity_action": {
-          const action = packet.actionId ?? packet.action;
-          if (action === 0) {
-            state.sneaking = true;
-            state.ticksSinceSneak = 0;
-          } else if (action === 1) state.sneaking = false;
-          else if (action === 3) state.sprinting = true;
-          else if (action === 4) state.sprinting = false;
-          break;
-        }
-        case "client_command": {
-          const action = packet.actionId;
-          if (action === 0) {
-            state.sneaking = true;
-            state.ticksSinceSneak = 0;
-          } else if (action === 1) state.sneaking = false;
-          else if (action === 3) state.sprinting = true;
-          else if (action === 4) state.sprinting = false;
-          break;
-        }
-        case "arm_animation": {
-          session.swingTicks = 6;
-          state.swing = true;
-          // 自己客户端挥手 → 点击速率 + 命中检测（1.8 服务端不会回显自己的动画）
-          session.checks.autoClicker.onSelfAnimation();
-          session.checks.autoBlock.onSelfAnimation();
-          break;
-        }
-        case "block_place": {
-          session.swingTicks = Math.max(session.swingTicks, 6);
-          session.player.notifyPlaceBlock();
-          break;
-        }
-        case "use_item": {
-          state.usingItem = true;
-          break;
-        }
-        case "block_dig": {
-          if (packet.status === 5) state.usingItem = false;
-          if (packet.status === 0 || packet.status === 2) state.usingItem = true;
-          break;
-        }
-        case "held_item_slot": {
-          // 物品本身由 window_items / set_slot 更新，这里只记录切换
-          break;
-        }
-        case "use_entity": {
-          // 攻击目标：交给 ReachA 的距离判定，不做额外处理
-          break;
-        }
-      }
-    } catch (err) {
-      this.logger.debug(`[${name}] client packet ${meta?.name} failed: ${(err as Error).message}`);
-    }
-  }
-
   /* ------------------------------------------------------- 服务端 → 客户端 */
 
-  handleServerPacket(name: string, data: Buffer): void {
+  handleServerPacket(_localPlayer: string, data: Buffer): void {
     if (!this.config.enabled) return;
     let parsed: any;
     try {
@@ -227,11 +156,16 @@ export class AntiCheatManager {
 
     try {
       this.updateWorld(packetName, params);
-      this.updateEntities(packetName, params);
-      this.updateSelfState(name, packetName, params);
+      this.entities2(packetName, params);
+      this.updateTracked(packetName, params);
     } catch (err) {
-      this.logger.debug(`[${name ?? "-"}] server packet ${packetName} failed: ${(err as Error).message}`);
+      this.logger.debug(`anticheat packet ${packetName} failed: ${(err as Error).message}`);
     }
+  }
+
+  /** 本地玩家的封包不再用于检测（保留接口，避免调用方改动） */
+  handleClientPacket(_name: string, _packet: any, _meta: any): void {
+    /* 检测目标是其他玩家 */
   }
 
   private updateWorld(packetName: string, params: any): void {
@@ -241,8 +175,7 @@ export class AntiCheatManager {
         const cz = params.z;
         if (typeof cx !== "number" || typeof cz !== "number") return;
         const bitMap = Array.isArray(params.bitMap) ? params.bitMap : null;
-        const sky = params.skyLightSent !== false;
-        this.world.loadChunkData(cx, cz, params.chunkData, bitMap, sky);
+        this.world.loadChunkData(cx, cz, params.chunkData, bitMap, params.skyLightSent !== false);
         break;
       }
       case "map_chunk_bulk": {
@@ -276,24 +209,27 @@ export class AntiCheatManager {
         break;
       }
       case "respawn": {
+        // 换世界：所有实体都会重发，先清空
         this.world.reset();
+        this.entities.clear();
+        this.tracked.clear();
         if (typeof params.dimension === "number") this.world.setDimension(params.dimension);
         break;
       }
     }
   }
 
-  private updateEntities(packetName: string, params: any): void {
+  /** 通用实体追踪（ReachA 需要受伤时间） */
+  private entities2(packetName: string, params: any): void {
     const id = params.entityId;
     switch (packetName) {
       case "named_entity_spawn": {
         this.entities.upsert(id, {
           uuid: params.playerUUID,
-          pos: new Vec3(params.x, params.y, params.z),
+          pos: new Vec3(params.x / 32, params.y / 32, params.z / 32),
           yaw: params.yaw,
           pitch: params.pitch,
           isLiving: true,
-          name: params.playerUUID ? `player-${String(params.playerUUID).slice(0, 8)}` : undefined,
         });
         break;
       }
@@ -307,8 +243,7 @@ export class AntiCheatManager {
         });
         break;
       }
-      case "spawn_entity":
-      case "spawn_entity_experience_orb": {
+      case "spawn_entity": {
         this.entities.upsert(id, {
           type: String(params.type ?? "object"),
           pos: new Vec3(params.x, params.y, params.z),
@@ -320,7 +255,11 @@ export class AntiCheatManager {
       case "entity_move_look": {
         const e = this.entities.get(id);
         if (!e) return;
-        e.pos = new Vec3(e.pos.x + (params.dX ?? 0) / 32, e.pos.y + (params.dY ?? 0) / 32, e.pos.z + (params.dZ ?? 0) / 32);
+        e.pos = new Vec3(
+          e.pos.x + (params.dX ?? 0) / 32,
+          e.pos.y + (params.dY ?? 0) / 32,
+          e.pos.z + (params.dZ ?? 0) / 32
+        );
         if (typeof params.yaw === "number") e.yaw = params.yaw;
         if (typeof params.pitch === "number") e.pitch = params.pitch;
         break;
@@ -335,13 +274,7 @@ export class AntiCheatManager {
       case "entity_teleport": {
         const e = this.entities.get(id);
         if (!e) return;
-        e.pos = new Vec3(params.x, params.y, params.z);
-        if (typeof params.yaw === "number") e.yaw = params.yaw;
-        if (typeof params.pitch === "number") e.pitch = params.pitch;
-        break;
-      }
-      case "entity_velocity": {
-        // 只用于保持实体存活，不做物理积分
+        e.pos = new Vec3(params.x / 32, params.y / 32, params.z / 32);
         break;
       }
       case "entity_destroy": {
@@ -356,81 +289,210 @@ export class AntiCheatManager {
     }
   }
 
-  private updateSelfState(name: string, packetName: string, params: any): void {
-    const session = this.sessions.get(name);
-    if (!session) return;
-    const state = session.player.state;
+  /* ------------------------------------------------------ 其他玩家追踪 */
 
+  private updateTracked(packetName: string, params: any): void {
     switch (packetName) {
-      case "position": {
-        // 服务端传送/校正
-        if (typeof params.x === "number") {
-          state.serverPos = new Vec3(params.x, params.y, params.z);
-          state.pos = new Vec3(params.x, params.y, params.z);
-          session.player.hasSetback = true;
-          setTimeout(() => (session.player.hasSetback = false), 400);
+      case "player_info": {
+        // action 0 = add player
+        if (params.action !== 0) return;
+        const entries = Array.isArray(params.data) ? params.data : [];
+        for (const entry of entries) {
+          // 1.8 里字段名是大写 UUID
+          const uuid = entry?.UUID ?? entry?.uuid;
+          if (uuid && typeof entry.name === "string") this.names.set(uuid, entry.name);
+        }
+        // 名字后到的情况：补上
+        for (const tracked of this.tracked.values()) {
+          const resolved = this.names.get(tracked.uuid);
+          if (resolved && tracked.name !== resolved) tracked.name = resolved;
         }
         break;
       }
-      case "login": {
-        state.gameType = gameModeName(params.gameMode);
-        break;
-      }
-      case "respawn": {
-        state.gameType = gameModeName(params.gameMode);
-        break;
-      }
-      case "abilities": {
-        if (typeof params.flags === "number") state.flying = (params.flags & 0x02) !== 0;
-        break;
-      }
-      case "update_health": {
-        if (typeof params.food === "number") state.food = params.food;
-        break;
-      }
-      case "entity_effect": {
-        if (params.entityId !== undefined && params.effectId === undefined) break;
-        if (params.effectId === 1) state.speedAmplifier = params.amplifier ?? 0;
-        if (params.effectId === 8) state.jumpAmplifier = params.amplifier ?? 0;
-        break;
-      }
-      case "remove_entity_effect": {
-        if (params.effectId === 1) state.speedAmplifier = -1;
-        if (params.effectId === 8) state.jumpAmplifier = -1;
-        break;
-      }
-      case "animation": {
-        // 服务端广播的挥手动画：给 AutoBlockA / AutoClickerA 用
-        session.checks.autoBlock.onSelfAnimation();
-        session.checks.autoClicker.onSelfAnimation();
-        state.swing = true;
-        session.swingTicks = 6;
+      case "named_entity_spawn": {
+        const uuid: string = params.playerUUID ?? "";
+        if (!uuid) return;
+        // 1.8 的生成包坐标是 i32 定点数（×32）
+        this.ensureTracked(
+          params.entityId,
+          uuid,
+          new Vec3(params.x / 32, params.y / 32, params.z / 32),
+          params.yaw ?? 0,
+          params.pitch ?? 0
+        );
         break;
       }
       case "rel_entity_move":
       case "entity_move_look": {
-        // 自己实体的移动封包 → AutoBlockA 的"不可能命中"
-        session.checks.autoBlock.onSelfEntityMove();
+        const tracked = this.tracked.get(params.entityId);
+        if (!tracked) return;
+        const next = new Vec3(
+          tracked.pos.x + (params.dX ?? 0) / 32,
+          tracked.pos.y + (params.dY ?? 0) / 32,
+          tracked.pos.z + (params.dZ ?? 0) / 32
+        );
+        if (typeof params.yaw === "number") tracked.yaw = params.yaw;
+        if (typeof params.pitch === "number") tracked.pitch = params.pitch;
+        this.applyMove(tracked, next);
         break;
       }
       case "entity_teleport": {
-        session.checks.autoBlock.onSelfEntityMove();
+        const tracked = this.tracked.get(params.entityId);
+        if (!tracked) return;
+        if (typeof params.yaw === "number") tracked.yaw = params.yaw;
+        if (typeof params.pitch === "number") tracked.pitch = params.pitch;
+        this.applyMove(tracked, new Vec3(params.x / 32, params.y / 32, params.z / 32));
+        break;
+      }
+      case "entity_metadata": {
+        const tracked = this.tracked.get(params.entityId);
+        if (!tracked) return;
+        const flags = readFlags(params.metadata);
+        if (flags !== null) {
+          tracked.sprinting = (flags & FLAG_SPRINTING) !== 0;
+          tracked.sneaking = (flags & FLAG_SNEAKING) !== 0;
+          tracked.usingItem = (flags & FLAG_USING_ITEM) !== 0;
+        }
+        break;
+      }
+      case "animation": {
+        const tracked = this.tracked.get(params.entityId);
+        if (!tracked) return;
+        if (params.animation !== 0 && params.animation !== undefined) return; // 0 = 挥手
+        tracked.swingTicks = 6;
+        tracked.checks.autoClicker.onSelfAnimation();
+        tracked.checks.autoBlock.onSelfAnimation();
+        break;
+      }
+      case "entity_destroy": {
+        const ids = Array.isArray(params.entityIds) ? params.entityIds : [];
+        for (const id of ids) this.removeTracked(id);
         break;
       }
     }
+  }
 
-    // 挥手上升沿 → ReachA
-    if (session.player.currentSwing && !session.player.lastSwing) {
-      session.checks.reach.onSwingStart();
+  private ensureTracked(entityId: number, uuid: string, pos: Vec3, yaw: number, pitch: number): void {
+    if (this.tracked.has(entityId)) return;
+    const name = this.names.get(uuid) ?? `player-${String(uuid).slice(0, 8)}`;
+    const toggles = resolveCheckToggles(this.config);
+    const gates: CheckGates = {
+      combat: toggles.AutoBlockA || toggles.AutoClickerA || toggles.NoSlowA || toggles.ReachA,
+      movement: true,
+      scaffolding: toggles.ScaffoldA || toggles.ScaffoldB || toggles.ScaffoldC,
+      simulation: toggles.Simulation,
+      experimental: this.config.experimental,
+    };
+
+    const tr = new TRPlayer(name, this.config, this.world, this.entities, (player, check, vl, extra) => {
+      // 名字可能后来才由 player_info 补上，告警时取最新
+      const current = this.tracked.get(entityId)?.name ?? player;
+      this.emitAlert(current, check, vl, extra);
+    });
+    // 其他玩家的实体包稀疏且会被插值，阈值放宽，避免误报
+    tr.thresholdOverride = this.config.threshold * OTHER_THRESHOLD_MULTIPLIER;
+    tr.state.gameType = "survival" as GameType;
+    tr.state.food = 20; // 看不到别人的饥饿值，避免 SpeedB 误报
+    tr.state.pos = pos.clone();
+    tr.state.serverPos = pos.clone();
+
+    const checks = registerAllChecks(tr, gates, toggles);
+    const tracked: TrackedPlayer = {
+      entityId,
+      uuid,
+      name,
+      player: tr,
+      gates,
+      toggles,
+      checks,
+      pos: pos.clone(),
+      yaw,
+      pitch,
+      onGround: true,
+      sprinting: false,
+      sneaking: false,
+      usingItem: false,
+      swingTicks: 0,
+      lastMoveAt: 0,
+      skipped: 0,
+    };
+    this.tracked.set(entityId, tracked);
+    this.logger.debug(`tracking other player "${name}" (entity ${entityId})`);
+
+    // 先跑一轮对齐历史，避免第一 tick 的巨大位移
+    tr.tick();
+  }
+
+  private applyMove(tracked: TrackedPlayer, next: Vec3): void {
+    const previous = tracked.pos;
+    tracked.pos = next.clone();
+    tracked.lastMoveAt = Date.now();
+
+    // 预测反作弊：一个移动包 = 一个 tick（用服务端下发的位置推演）
+    tracked.checks.simulation.onMovePacket(next, tracked.onGround, tracked.yaw, tracked.pitch);
+
+    tracked.player.state.pos = next.clone();
+    const dx = next.x - previous.x;
+    const dy = next.y - previous.y;
+    const dz = next.z - previous.z;
+    tracked.onGround = this.inferOnGround(next, dy);
+    tracked.player.state.onGround = tracked.onGround;
+    void dx;
+    void dz;
+  }
+
+  /**
+   * 其他玩家的 onGround 不会下发，只能推断：
+   * 垂直方向没动、而且脚下有实心方块 → 认为站在地上。
+   */
+  private inferOnGround(pos: Vec3, dy: number): boolean {
+    if (dy > 0.0001) return false;
+    const below = this.world.getBlock(pos.x, pos.y - 0.05, pos.z);
+    if (!below) return dy >= -0.0001;
+    return below.id !== 0;
+  }
+
+  private removeTracked(entityId: number): void {
+    const tracked = this.tracked.get(entityId);
+    if (!tracked) return;
+    this.tracked.delete(entityId);
+    this.logger.debug(`stopped tracking "${tracked.name}"`);
+  }
+
+  /* --------------------------------------------------------------- tick */
+
+  private tickAll(): void {
+    if (!this.config.enabled || this.blocked) return;
+    this.entities.tick();
+
+    for (const tracked of this.tracked.values()) {
+      const tr = tracked.player;
+      // 把追踪到的状态同步给 TRPlayer（它负责 current/last/history）
+      tr.state.pos = tracked.pos.clone();
+      tr.state.rot.yaw = tracked.yaw;
+      tr.state.rot.pitch = tracked.pitch;
+      tr.state.onGround = tracked.onGround;
+      tr.state.sprinting = tracked.sprinting;
+      tr.state.sneaking = tracked.sneaking;
+      tr.state.usingItem = tracked.usingItem;
+      tr.state.swing = tracked.swingTicks > 0;
+      tr.state.serverPos = tracked.pos.clone();
+
+      if (tracked.swingTicks > 0) tracked.swingTicks--;
+
+      try {
+        tr.tick();
+      } catch (err) {
+        this.logger.debug(`[${tracked.name}] tick failed: ${(err as Error).message}`);
+      }
     }
   }
 
-  /* ------------------------------------------------------------- 告警输出 */
+  /* ------------------------------------------------------------- 告警 */
 
   private emitAlert(playerName: string, check: string, violations: number, extra: string): void {
     const suffix = extra ? ` ${extra}` : "";
     const line = `[${playerName}] failed ${check} (VL:${violations})${suffix}`;
-
     if (this.config.console) this.logger.warn(line);
 
     if (this.config.inGameChat && this.chatSink) {
@@ -443,33 +505,33 @@ export class AntiCheatManager {
     }
   }
 
-  /** 世界模型（测试 / 调试用） */
-  worldModel(): WorldModel {
-    return this.world;
-  }
-
-  /** 某个玩家的检查实例（测试用） */
-  sessionChecks(player: string): ReturnType<typeof registerAllChecks> | null {
-    return this.sessions.get(player)?.checks ?? null;
-  }
-
   /** 控制台 /anticheat 用 */
-  status(): Array<{ player: string; violations: Record<string, number> }> {    return [...this.sessions.entries()].map(([name, session]) => ({
-      player: name,
-      violations: session.player.manager.violations(),
+  status(): Array<{ player: string; violations: Record<string, number> }> {
+    return [...this.tracked.values()].map((t) => ({
+      player: t.name,
+      violations: t.player.manager.violations(),
     }));
   }
 
   clearViolations(): void {
-    for (const [, session] of this.sessions) {
-      session.player.manager.onCustomAction((check) => (check.violations = 0));
+    for (const tracked of this.tracked.values()) {
+      tracked.player.manager.onCustomAction((check) => (check.violations = 0));
     }
   }
+}
 
-  /** 关服/调试用：暂停/恢复 tick */
-  setBlocked(blocked: boolean): void {
-    this.blocked = blocked;
+/** 从 entity_metadata 里取 flags（index 0） */
+function readFlags(metadata: unknown): number | null {
+  if (!Array.isArray(metadata)) return null;
+  for (const entry of metadata) {
+    if (!entry || typeof entry !== "object") continue;
+    const key = (entry as any).key;
+    if (key !== 0) continue;
+    const value = (entry as any).value;
+    if (typeof value === "number") return value;
+    if (value && typeof value === "object" && typeof (value as any).value === "number") return (value as any).value;
   }
+  return null;
 }
 
 function gameModeName(mode: unknown): GameType {
@@ -485,5 +547,5 @@ function gameModeName(mode: unknown): GameType {
   }
 }
 
-export { DEFAULT_ANTICHEAT_CONFIG, resolveCheckToggles, color };
+export { DEFAULT_ANTICHEAT_CONFIG, resolveCheckToggles, color, gameModeName };
 export type { AntiCheatConfig, CheckName };

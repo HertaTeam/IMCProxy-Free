@@ -112,11 +112,14 @@ export class ReverseProxy extends EventEmitter {
     // 参考型反作弊：只告警（控制台 + 游戏内聊天栏），不踢人、不改包
     if (config.antiCheat?.enabled) {
       this.antiCheat = new AntiCheatManager(config.antiCheat);
-      this.antiCheat.setChatSink((name, text) => {
-        try {
-          this.playerHooks.get(name)?.sendToClient(text);
-        } catch {
-          /* 聊天栏不可用时忽略 */
+      this.antiCheat.setChatSink((_name, text) => {
+        // 告警内容是关于其他玩家的，广播给本机所有客户端
+        for (const hooks of this.playerHooks.values()) {
+          try {
+            hooks.sendToClient(text);
+          } catch {
+            /* 单个客户端不可用不影响其他 */
+          }
         }
       });
     }

@@ -145,6 +145,8 @@ export class TRPlayer {
 
   public offGroundTicks = 0;
   public speedMul = 1;
+  /** 覆盖 config.threshold（其他玩家的实体包稀疏，阈值要放宽） */
+  public thresholdOverride?: number;
   public jumping = false;
   public hasSetback = false;
   public upTime = 0;

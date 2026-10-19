@@ -535,6 +535,9 @@ export class Simulation extends Check {
   private pending: Vec3[] = [];
   private lastPos: Vec3 | null = null;
   private skipped = 0;
+  /** 调试统计：比较次数 / 最近一次的最小偏差 */
+  private compared = 0;
+  private lastBest = 0;
 
   constructor(player: TRPlayer, private gates: CheckGates, private toggles: Record<string, boolean>) {
     super("Simulation", player);
@@ -586,7 +589,9 @@ export class Simulation extends Check {
         const d = candidate.distanceTo(pos);
         if (d < best) best = d;
       }
-      if (best > this.player.config.threshold) {
+      this.compared++;
+      this.lastBest = best;
+      if (best > this.threshold()) {
         this.flag(`offset ${best.toFixed(4)} blocks (${this.pending.length} candidates, none matched)`);
       }
     }
@@ -613,6 +618,15 @@ export class Simulation extends Check {
   /** 调试用：被跳过（无世界数据/瞬移）的移动包数 */
   skippedMoves(): number {
     return this.skipped;
+  }
+
+  private threshold(): number {
+    return this.player.thresholdOverride ?? this.player.config.threshold;
+  }
+
+  /** 调试：比较了多少次、最近一次最小偏差多少 */
+  debugStats(): { compared: number; lastBest: number; skipped: number; pending: number } {
+    return { compared: this.compared, lastBest: this.lastBest, skipped: this.skipped, pending: this.pending.length };
   }
 
   /**
