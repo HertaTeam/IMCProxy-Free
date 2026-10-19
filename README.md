@@ -1,3 +1,5 @@
+![IMCProxy-Free](src/imcplogo.jpg)
+
 # IMCProxy-Free
 
 让原版 Minecraft 1.8.9 客户端连接 Eaglercraft WebSocket 服务器。
