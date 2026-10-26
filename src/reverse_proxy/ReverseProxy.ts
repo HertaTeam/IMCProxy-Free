@@ -3,7 +3,8 @@ import mcp, { createServer, Server, states } from "minecraft-protocol";
 import { Logger, verboseLogging, color } from "../logger.js";
 import { mcToAnsi, stripMcFormat } from "./McFormat.js";
 import { NameProtector, type NameProtectOptions } from "./NameProtect.js";
-import { AntiCheatManager, type AntiCheatConfig } from "./anticheat/index.js";
+import { ServerNameSpoofer, DEFAULT_SERVER_NAME_SPOOF, type ServerNameSpoofOptions } from "./ServerNameSpoof.js";
+import { getNameProtectConfig, getServerNameSpoofConfig } from "./config.js";
 import { type NameProtectConfig } from "./config.js";
 import { EaglerClient } from "./EaglerClient.js";
 import { ReverseEnums } from "./Enums.js";
@@ -64,8 +65,9 @@ export interface ReverseProxyConfig {
   randomIdLength?: number;
   /** nameprotect：只改客户端显示的封包 */
   nameProtect?: NameProtectConfig;
+  /** 服务器名伪装：只改客户端显示的封包 */
+  serverNameSpoof?: ServerNameSpoofOptions;
   /** 参考型反作弊（只告警，不踢人） */
-  antiCheat?: AntiCheatConfig;
 }
 
 export interface ConnectedPlayer {
@@ -90,8 +92,9 @@ export class ReverseProxy extends EventEmitter {
   private packetLogging: boolean = false;
   private automation: GameAutomation | null = null;
   private nameProtectOptions: NameProtectOptions;
+  private serverNameOptions: ServerNameSpoofOptions = DEFAULT_SERVER_NAME_SPOOF;
+  private serverNameSpoofer: ServerNameSpoofer;
   private playerHooks: Map<string, AutomationHooks> = new Map();
-  private antiCheat: AntiCheatManager | null = null;
 
   constructor(config: ReverseProxyConfig, automation?: GameAutomation | null) {
     super();
@@ -107,22 +110,18 @@ export class ReverseProxy extends EventEmitter {
       chat: false,
       scoreboard: false,
     };
+    this.serverNameOptions = config.serverNameSpoof ?? DEFAULT_SERVER_NAME_SPOOF;
+    this.serverNameSpoofer = new ServerNameSpoofer(() => this.serverNameOptions);
     this.logger = new Logger("ReverseProxy");
+  }
 
-    // 参考型反作弊：只告警（控制台 + 游戏内聊天栏），不踢人、不改包
-    if (config.antiCheat?.enabled) {
-      this.antiCheat = new AntiCheatManager(config.antiCheat);
-      this.antiCheat.setChatSink((_name, text) => {
-        // 告警内容是关于其他玩家的，广播给本机所有客户端
-        for (const hooks of this.playerHooks.values()) {
-          try {
-            hooks.sendToClient(text);
-          } catch {
-            /* 单个客户端不可用不影响其他 */
-          }
-        }
-      });
-    }
+  /**
+   * 配置热更新：/set 改完立刻生效，不需要重启。
+   * 只处理改包相关的项，其余（端口、上游、maxPlayers）重启后生效。
+   */
+  applyRuntimeConfig(): void {
+    this.nameProtectOptions = getNameProtectConfig();
+    this.serverNameOptions = getServerNameSpoofConfig();
   }
 
   async start(): Promise<void> {
@@ -265,6 +264,23 @@ export class ReverseProxy extends EventEmitter {
 
   togglePacketLogging(): boolean {
     return this.setPacketLogging(!this.packetLogging);
+  }
+
+  /**
+   * 给所有在线玩家的上游服务器发一条聊天指令（/login 之类）。
+   * @returns 成功发出去的会话数
+   */
+  sendChatToServer(message: string): number {
+    let sent = 0;
+    for (const hooks of this.playerHooks.values()) {
+      try {
+        hooks.sendToServer(message);
+        sent++;
+      } catch {
+        /* 单个会话失败不影响其他 */
+      }
+    }
+    return sent;
   }
 
   /**
@@ -496,7 +512,7 @@ export class ReverseProxy extends EventEmitter {
 
     // nameprotect：把自己在客户端上的显示名换掉（只改服务端→客户端方向的封包）
     const nameProtector = new NameProtector(
-      this.nameProtectOptions,
+      () => this.nameProtectOptions,
       () => this.resolveDisplayName(),
       [player.username, player.upstreamUsername]
     );
@@ -528,7 +544,6 @@ export class ReverseProxy extends EventEmitter {
       },
     };
     this.playerHooks.set(player.username, hooks);
-    this.antiCheat?.registerPlayer(player.username);
 
     let packetsToServer = 0;
     let packetsToClient = 0;
@@ -543,7 +558,6 @@ export class ReverseProxy extends EventEmitter {
 
     mcClient.on("packet", (packet: any, meta: any) => {
       if (meta.state !== states.PLAY) return;
-      this.antiCheat?.handleClientPacket(player.username, packet, meta);
 
       if (meta.name === "chat" && typeof packet.message === "string") {
         this.logger.info(`[${player.username}] Chat: ${color.green(packet.message)}`);
@@ -574,8 +588,6 @@ export class ReverseProxy extends EventEmitter {
     eaglerClient.on("packet", (data: Buffer) => {
       const packetId = data[0];
 
-      // 反作弊：服务端 → 客户端封包（世界 / 实体 / 自身状态）
-      this.antiCheat?.handleServerPacket(player.username, data);
 
       if (packetId === 0x02) {
         const { plain, colored } = this.parseChatPacket(data);
@@ -598,7 +610,8 @@ export class ReverseProxy extends EventEmitter {
 
       try {
         // nameprotect 只在这里生效；发给服务端的封包完全不经过它
-        mcClient.writeRaw(nameProtector.rewrite(data));
+        // 先做服务器名伪装，再做 nameprotect（两者都只改服务端→客户端方向）
+        mcClient.writeRaw(nameProtector.rewrite(this.serverNameSpoofer.rewrite(data)));
         packetsToClient++;
       } catch (err) {
         if (this.packetLogging) {
@@ -623,7 +636,6 @@ export class ReverseProxy extends EventEmitter {
       clearInterval(statsInterval);
       this.playerCleanups.delete(player.username);
       this.playerHooks.delete(player.username);
-      this.antiCheat?.removePlayer(player.username);
       this.players.delete(player.username);
       this.emit("playerDisconnect", player);
       return true;
@@ -680,7 +692,6 @@ export class ReverseProxy extends EventEmitter {
     this.playerCleanups.clear();
     this.playerHooks.clear();
     this.players.clear();
-    this.antiCheat?.shutdown();
 
     for (const pending of this.pendingPlayers.values()) {
       pending.mcClient.end("§cProxy is shutting down");
@@ -708,25 +719,4 @@ export class ReverseProxy extends EventEmitter {
     return Array.from(this.players.values());
   }
 
-  /* ------------------------------------------------------- 反作弊（只读） */
-
-  /** /anticheat 用：当前状态快照 */
-  antiCheatStatus(): {
-    enabled: boolean;
-    config: AntiCheatConfig | null;
-    players: Array<{ player: string; violations: Record<string, number> }>;
-  } {
-    return {
-      enabled: this.antiCheat?.isEnabled() ?? false,
-      config: this.antiCheat?.getConfig() ?? null,
-      players: this.antiCheat?.status() ?? [],
-    };
-  }
-
-  /** /anticheat reset：清空所有违规计数 */
-  antiCheatReset(): boolean {
-    if (!this.antiCheat) return false;
-    this.antiCheat.clearViolations();
-    return true;
-  }
 }

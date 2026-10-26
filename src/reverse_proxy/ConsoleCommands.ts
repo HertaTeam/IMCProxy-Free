@@ -7,15 +7,26 @@ import {
   getAnnounceConfig,
   getUpdateCheckConfig,
   getAutomationConfig,
+  getGameAccountsFile,
   getConfigFilePath,
   setConfigValue,
+  applyConfigValue,
+  isHotConfigKey,
   getConfigValue,
   parseConfigValue,
   listConfigKeys,
 } from "./config.js";
 import { checkForUpdates, loadVersionState, VERSION_FILE } from "./UpdateCheck.js";
 import { backupFiles, backupDir, defaultBackupTargets, listBackups } from "./Backup.js";
-import type { AntiCheatConfig } from "./anticheat/core.js";
+import {
+  DEFAULT_GAME_ACCOUNTS_FILE,
+  describeGameAccounts,
+  loadGameAccounts,
+  removeGameAccount,
+  resolveGameAccountRef,
+  saveGameAccounts,
+  upsertGameAccount,
+} from "./GameAccounts.js";
 
 export interface ConsoleCommandTarget {
   resetRandomId(): string;
@@ -25,16 +36,23 @@ export interface ConsoleCommandTarget {
   getPlayerCount(): number;
   setPacketLogging(enabled: boolean): boolean;
   togglePacketLogging(): boolean;
-  /** 反作弊状态快照（未启用时 enabled=false, config=null） */
-  antiCheatStatus(): {
-    enabled: boolean;
-    config: AntiCheatConfig | null;
-    players: Array<{ player: string; violations: Record<string, number> }>;
-  };
-  /** 清空违规计数 */
-  antiCheatReset(): boolean;
+  /** 给上游服务器发一条聊天指令（/login 之类） */
+  sendChatToServer(message: string): number;
 }
 
+/** 命令名 → 配置键前缀（注意 nameProtect / serverNameSpoof 是驼峰） */
+const SECTION_PREFIX: Record<string, string> = {
+  proxy: "",
+  random: "randomId.",
+  console: "console.",
+  automation: "automation.",
+  nameprotect: "nameProtect.",
+  servername: "serverNameSpoof.",
+  announce: "announce.",
+  updatecheck: "updateCheck.",
+  imc: "imc.",
+  imcp: "imc.",
+};
 const ID_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
 /** 控制台可用命令（Tab 补全与 /help 都用它） */
@@ -42,10 +60,18 @@ const CONSOLE_COMMANDS = [
   "randomname", "randomid", "rid",
   "setname", "setid", "sid",
   "log", "debug",
-  "config", "cfg",
+  "proxy",
+  "random",
+  "console",
+  "automation",
+  "nameprotect",
+  "servername",
+  "announce",
+  "updatecheck",
+  "settings",
   "backup",
-  "anticheat", "ac",
   "update",
+  "gamestatus", "logingame", "gameadd", "gamedel",
   "help",
 ];
 
@@ -215,18 +241,39 @@ export class ConsoleCommands {
         this.setRandomId(argument);
         break;
 
-      case "config":
-      case "cfg":
-        this.configCommand(argument);
+      case "proxy":
+      case "random":
+      case "console":
+      case "automation":
+      case "nameprotect":
+      case "servername":
+      case "announce":
+      case "updatecheck":
+        this.settingsCommand(command, argument);
         break;
 
-      case "anticheat":
-      case "ac":
-        this.antiCheatCommand(argument);
+      case "settings":
+        this.settingsOverview();
         break;
 
       case "update":
         this.updateCommand(argument);
+        break;
+
+      case "gamestatus":
+        this.gameStatus();
+        break;
+
+      case "logingame":
+        this.loginGame(argument);
+        break;
+
+      case "gameadd":
+        this.gameAdd(argument);
+        break;
+
+      case "gamedel":
+        this.gameDelete(argument);
         break;
 
       case "help":
@@ -369,121 +416,159 @@ export class ConsoleCommands {
     this.logger.info(`Completions: ${matches.map((m) => "/" + m).join("  ")}`);
   }
 
-  /** /config [keys|get <键>|set <键> <值>] */
-  private configCommand(argument: string): void {
+  /**
+   * 每个配置分区一个命令：/nameprotect [子项] [值]
+   * 不带参数 = 显示该分区当前值；带子项 = 读；带值 = 改（热键立即生效）。
+   */
+  private settingsCommand(section: string, argument: string): void {
+    const prefix = SECTION_PREFIX[section] ?? section + ".";
+    const all = listConfigKeys();
+    const keys = all.filter((k) => (prefix === "" ? !k.includes(".") : k.startsWith(prefix)));
     const parts = argument.split(/\s+/).filter(Boolean);
-    const sub = (parts[0] ?? "").toLowerCase();
 
-    if (!sub) {
-      this.printConfig();
+    if (parts.length === 0) {
+      this.logger.section(section);
+      if (keys.length === 0) {
+        this.logger.warn('No settings under "' + section + '".');
+        return;
+      }
+      for (const key of keys) {
+        const short = prefix === "" ? key : key.slice(prefix.length);
+        this.logger.kv("  " + short, JSON.stringify(getConfigValue(key)));
+      }
       this.logger.info("");
-      this.logger.info("  /config keys                     list every editable key");
-      this.logger.info("  /config get <key>                show one value");
-      this.logger.info("  /config set <key> <value>        change it and save (restart to apply)");
-      this.logger.info("  Example: /config set nameProtect.enabled false");
+      this.logger.info("  usage: /" + section + " <setting> <value>");
+      this.logger.info("  example: /" + section + " " + (keys[0] ?? "").slice(prefix.length) + " <value>");
       return;
     }
 
-    if (sub === "keys" || sub === "list") {
-      const keys = listConfigKeys();
-      this.logger.info(`Editable keys (${keys.length}):`);
-      for (const key of keys) this.logger.info(`  ${key} = ${JSON.stringify(getConfigValue(key))}`);
+    const sub = parts[0];
+    const key = all.find((k) => k === prefix + sub || k === sub) ?? prefix + sub;
+
+    if (!all.includes(key)) {
+      this.logger.warn('Unknown setting "' + sub + '" for /' + section + ".");
+      this.logger.info("  available: " + keys.map((k) => (prefix === "" ? k : k.slice(prefix.length))).join(", "));
       return;
     }
 
-    if (sub === "get") {
-      const key = parts[1];
-      if (!key) {
-        this.logger.warn("Usage: /config get <key>");
-        return;
-      }
-      const value = getConfigValue(key);
-      if (value === undefined) {
-        this.logger.warn(`Key "${key}" not found. Use /config keys to list them.`);
-        return;
-      }
-      this.logger.info(`${key} = ${JSON.stringify(value)}`);
+    if (parts.length === 1) {
+      this.logger.info(key + " = " + JSON.stringify(getConfigValue(key)));
       return;
     }
 
-    if (sub === "set") {
-      const key = parts[1];
-      const rawValue = parts.slice(2).join(" ");
-      if (!key || !rawValue) {
-        this.logger.warn("Usage: /config set <key> <value>   (use \"\" for an empty string)");
-        return;
-      }
-      const result = setConfigValue(key, parseConfigValue(rawValue));
-      if (result.ok) {
-        this.logger.info(`Saved to ${getConfigFilePath()}: ${result.message}`);
-        this.logger.info("Restart the proxy for the new value to take effect.");
-      } else {
-        this.logger.warn(result.message);
-      }
+    const raw = parts.slice(1).join(" ");
+    const result = applyConfigValue(key, parseConfigValue(raw));
+    if (!result.ok) {
+      this.logger.warn(result.message);
       return;
     }
-
-    this.logger.warn(`Unknown subcommand "${sub}". Try /config, /config keys, /config get <key>, /config set <key> <value>`);
+    this.logger.info("Saved: " + key + " = " + JSON.stringify(getConfigValue(key)));
+    if (isHotConfigKey(key)) this.logger.info("Applied immediately (hot).");
+    else this.logger.info("Takes effect after a restart.");
   }
 
-  /** /anticheat [status|reset|checks] */
-  private antiCheatCommand(argument: string): void {
-    const sub = argument.trim().toLowerCase();
-    const status = this.target.antiCheatStatus();
-
-    if (!status.enabled || !status.config) {
-      this.logger.warn("Anti-cheat is disabled (config.json -> antiCheat.enabled = false).");
-      return;
-    }
-
-    if (sub === "reset") {
-      this.target.antiCheatReset();
-      this.logger.info("Anti-cheat violation counters cleared.");
-      return;
-    }
-
-    const cfg = status.config;
-
-    if (sub === "checks") {
-      this.logger.section("Anti-cheat checks");
-      const toggles = cfg.checks ?? {};
-      for (const name of Object.keys(toggles).sort()) {
-        const on = toggles[name as keyof typeof toggles];
-        this.logger.info(`  ${color.cyan(name.padEnd(14))} ${on ? color.green("on") : color.gray("off")}`);
-      }
-      this.logger.info(`  ${color.gray("Enable more with /config set antiCheat.checks.<Name> true")}`);
-      return;
-    }
-
-    this.logger.section("Anti-cheat");
-    this.logger.kv("target", "other players (the local player is not checked)");
-    this.logger.kv("enabled", cfg.enabled);
-    this.logger.kv("experimental", cfg.experimental);
-    this.logger.kv("threshold", cfg.threshold);
-    this.logger.kv("latency", `${cfg.latency}ms`);
-    this.logger.kv("alert buffer", cfg.alertBuffer);
-    this.logger.kv("vl clear", cfg.vlClearTicks > 0 ? `${cfg.vlClearTicks} ticks` : "never");
-    this.logger.kv("output", `console=${cfg.console} chat=${cfg.inGameChat}`);
-
-    if (status.players.length === 0) {
-      this.logger.info("");
-      this.logger.info("  No other players tracked yet (the world must contain other players).");
-      return;
-    }
-
-    for (const entry of status.players) {
-      this.logger.info("");
-      this.logger.info(`  ${color.cyan(entry.player)}`);
-      const names = Object.keys(entry.violations);
-      if (names.length === 0) {
-        this.logger.kv("  violations", "(none)");
-        continue;
-      }
-      for (const name of names) {
-        this.logger.kv(`  ${name}`, `VL ${entry.violations[name]}`);
-      }
-    }
+  /** /settings —— 打印全部配置 + 所有可改键 */
+  private settingsOverview(): void {
+    this.printConfig();
+    const keys = listConfigKeys();
+    this.logger.info("");
+    this.logger.info("Editable settings (" + keys.length + "):");
+    for (const key of keys) this.logger.info("  " + key + " = " + JSON.stringify(getConfigValue(key)));
+    this.logger.info("");
+    this.logger.info("  Change one with the matching section command, e.g. /nameprotect enabled false");
   }
+
+
+  /* -------------------------------------------------- 游戏账号管理 */
+
+  private gameAccountsFile(): string {
+    return getGameAccountsFile();
+  }
+
+  /** /gamestatus —— 查看已保存的账号（含密码） */
+  private gameStatus(): void {
+    const file = this.gameAccountsFile();
+    const accounts = loadGameAccounts(file);
+    this.logger.section("Game accounts");
+    this.logger.kv("File", file);
+    if (accounts.length === 0) {
+      this.logger.warn("No accounts saved yet. Add one with /gameadd <account> <password>");
+      return;
+    }
+    this.logger.kv("Saved", accounts.length + " account(s)");
+    for (const line of describeGameAccounts(accounts)) this.logger.info("  " + line);
+    this.logger.info("");
+    this.logger.info("  /logingame [#n | account]        log in with the saved password");
+    this.logger.info("  /gameadd <account> <password>    add or update an account");
+    this.logger.info("  /gamedel <#n | account>          remove an account");
+  }
+
+  /** /logingame [ref | account password] —— 用保存的账号登录 */
+  private loginGame(argument: string): void {
+    const file = this.gameAccountsFile();
+    const parts = argument.split(/\s+/).filter(Boolean);
+    let account: { account: string; password: string } | null = null;
+
+    if (parts.length >= 2) {
+      account = { account: parts[0], password: parts[1] };
+      upsertGameAccount(account.account, account.password, file);
+      this.logger.info('Saved "' + account.account + '" to ' + file);
+    } else if (parts.length === 1) {
+      const found = resolveGameAccountRef(loadGameAccounts(file), parts[0]);
+      if (!found) {
+        this.logger.warn('No saved account matches "' + parts[0] + '". Use /gamestatus to list them.');
+        return;
+      }
+      account = { account: found.account, password: found.password };
+    } else {
+      const accounts = loadGameAccounts(file);
+      if (accounts.length === 0) {
+        this.logger.warn("No accounts saved. Use /gameadd <account> <password> or /logingame <account> <password>");
+        return;
+      }
+      account = { account: accounts[0].account, password: accounts[0].password };
+    }
+
+    const sent = this.target.sendChatToServer("/login " + account.password);
+    if (sent === 0) {
+      this.logger.warn("No player is connected right now; connect a client first.");
+      return;
+    }
+    this.logger.info('Sent /login for "' + account.account + '" (' + sent + ' session(s)).');
+  }
+
+  /** /gameadd <account> <password> [note] */
+  private gameAdd(argument: string): void {
+    const parts = argument.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      this.logger.warn("Usage: /gameadd <account> <password> [note]");
+      return;
+    }
+    const account = parts[0];
+    const password = parts[1];
+    const note = parts.slice(2).join(" ");
+    upsertGameAccount(account, password, this.gameAccountsFile(), note || undefined);
+    this.logger.info('Saved "' + account + '" to ' + this.gameAccountsFile());
+  }
+
+  /** /gamedel <#n | account> */
+  private gameDelete(argument: string): void {
+    const ref = argument.trim();
+    if (!ref) {
+      this.logger.warn("Usage: /gamedel <#n | account>");
+      return;
+    }
+    const accounts = loadGameAccounts(this.gameAccountsFile());
+    const result = removeGameAccount(accounts, ref);
+    if (!result.removed) {
+      this.logger.warn('No saved account matches "' + ref + '".');
+      return;
+    }
+    saveGameAccounts(result.rest, this.gameAccountsFile());
+    this.logger.info('Removed "' + result.removed.account + '".');
+  }
+
+  /* -------------------------------------------------------- 更新提示 */
 
   /** /update [status] —— 手动检查 GitHub 上的版本 */
   private updateCommand(argument: string): void {
@@ -497,7 +582,7 @@ export class ConsoleCommands {
     this.logger.kv("Launches today", state.count);
     if (state.lastCheck) this.logger.kv("Last check", state.lastCheck);
     if (state.remoteEditDate) this.logger.kv("Remote edit date", state.remoteEditDate);
-    this.logger.kv("Repo", `github.com/${config.repo}`);
+    this.logger.kv("Repo", "github.com/" + config.repo);
     this.logger.kv("Enabled", config.enabled);
 
     if (sub === "status") return;
@@ -566,16 +651,7 @@ export class ConsoleCommands {
     this.logger.kv("  targets", `playlist=${np?.playlist} chat=${np?.chat} scoreboard=${np?.scoreboard}`);
 
     this.logger.info("");
-    this.logger.info(`  ${color.gray("anti-cheat")}`);
-    const acfg = c.antiCheat;
-    this.logger.kv("  enabled", acfg?.enabled ?? false);
-    this.logger.kv("  experimental", acfg?.experimental ?? false);
-    this.logger.kv("  threshold", acfg?.threshold ?? "-");
-    this.logger.kv("  latency", acfg?.latency != null ? `${acfg.latency}ms` : "-");
-    this.logger.kv("  output", `console=${acfg?.console} chat=${acfg?.inGameChat}`);
-
-    this.logger.info("");
-    this.logger.info(`  ${color.gray("Use /config set <key> <value> to change a value, then restart.")}`);
+    this.logger.info(`  ${color.gray("Change a value with its section command, e.g. /nameprotect enabled false (hot keys apply instantly).")}`);
   }
 
   printHelp(): void {
@@ -586,16 +662,23 @@ export class ConsoleCommands {
     this.logger.info("  /setname /setid /sid <id>         set a custom ID (3-16 chars: a-z A-Z 0-9 _)");
     this.logger.info("  /log /debug [on|off]              toggle packet debug logging");
     this.logger.info("");
-    this.logger.info("  config:");
-    this.logger.info("  /config /cfg                      show the effective configuration");
-    this.logger.info("  /config keys                      list every editable key");
-    this.logger.info("  /config get <key>                 show one value");
-    this.logger.info("  /config set <key> <value>         change it and save (restart to apply)");
+    this.logger.info("  settings (one command per section, hot keys apply instantly):");
+    this.logger.info("  /proxy        [setting] [value]".padEnd(52) + "settings of proxy");
+    this.logger.info("  /random       [setting] [value]".padEnd(52) + "settings of randomId");
+    this.logger.info("  /console      [setting] [value]".padEnd(52) + "settings of console");
+    this.logger.info("  /automation   [setting] [value]".padEnd(52) + "settings of automation");
+    this.logger.info("  /nameprotect  [setting] [value]".padEnd(52) + "settings of nameprotect");
+    this.logger.info("  /servername   [setting] [value]".padEnd(52) + "settings of servername");
+    this.logger.info("  /announce     [setting] [value]".padEnd(52) + "settings of announce");
+    this.logger.info("  /updatecheck  [setting] [value]".padEnd(52) + "settings of updatecheck");
+    this.logger.info("  /settings                         show the effective config + every editable key");
     this.logger.info("");
-    this.logger.info("  anti-cheat (reference only, never kicks):");
-    this.logger.info("  /anticheat /ac                    status + per-player violations");
-    this.logger.info("  /anticheat checks                 list every check and its toggle");
-    this.logger.info("  /anticheat reset                  clear violation counters");
+    this.logger.info("  game accounts:");
+    this.logger.info("  /gamestatus                       list saved accounts (account + password)");
+    this.logger.info("  /logingame [#n | account]         log in with the saved password");
+    this.logger.info("  /logingame <account> <password>   save and log in directly");
+    this.logger.info("  /gameadd <account> <password>     add or update an account");
+    this.logger.info("  /gamedel <#n | account>           remove an account");
     this.logger.info("");
     this.logger.info("  update:");
     this.logger.info("  /update                           check GitHub for a newer version");

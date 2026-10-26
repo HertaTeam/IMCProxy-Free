@@ -13,6 +13,7 @@ import {
   getUpdateCheckConfig,
   getAutomationConfig,
   getConfigFilePath,
+  onConfigChange,
 } from "./config.js";
 import { Logger, verboseLogging, color, startRunLog, closeRunLog, getLogFilePath, writeLogLine } from "../logger.js";
 
@@ -54,16 +55,25 @@ async function main() {
     "nameprotect",
     config.nameProtect?.enabled ? `enabled (display as "${config.nameProtect.name}")` : "disabled"
   );
-  logger.kv(
-    "anti-cheat",
-    config.antiCheat?.enabled
-      ? `enabled (reference only: console=${config.antiCheat.console} chat=${config.antiCheat.inGameChat})`
-      : "disabled"
-  );
+
   logger.info("");
 
   const automation = automationConfig.enabled ? new GameAutomation(automationConfig) : null;
   const proxy = new ReverseProxy(config, automation);
+
+  // 配置热更新：/set 改完立刻生效（不用重启）
+  let announceTimer: NodeJS.Timeout | null = null;
+  const restartAnnounce = (): void => {
+    if (announceTimer) clearInterval(announceTimer);
+    announceTimer = startAnnounce(proxy, getAnnounceConfig());
+  };
+  onConfigChange((keyPath) => {
+    if (keyPath.startsWith("nameProtect") || keyPath.startsWith("serverNameSpoof")) {
+      proxy.applyRuntimeConfig();
+    } else if (keyPath.startsWith("announce")) {
+      restartAnnounce();
+    }
+  });
   const consoleCommands = new ConsoleCommands(proxy, { echo: consoleConfig.echo });
 
 
@@ -75,7 +85,7 @@ async function main() {
   if (consoleConfig.autoHelp) consoleCommands.printHelp();
 
   // 公告刷屏：控制台 + 游戏内聊天栏（间隔与开关见 config.json -> announce）
-  startAnnounce(proxy, getAnnounceConfig());
+  announceTimer = startAnnounce(proxy, getAnnounceConfig());
 
   // 更新提示：和 GitHub 上的 version.json 比 editDate（取不到就静默跳过）
   void checkForUpdates(updateConfig, (result) => {

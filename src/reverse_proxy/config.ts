@@ -4,7 +4,6 @@ import { ReverseProxyConfig } from "./ReverseProxy.js";
 import { parseRandomIdMode, normalizeRandomIdLength } from "./RandomId.js";
 import { Logger } from "../logger.js";
 import { backupFile } from "./Backup.js";
-import type { AntiCheatConfig } from "./anticheat/core.js";
 
 const logger = new Logger("Config");
 
@@ -54,6 +53,8 @@ export interface AutomationConfig {
   enabled: boolean;
   /** 游戏账号 TXT（由 /autoreg 写入） */
   gameAccountFile: string;
+  /** 多账号列表 TXT（/gameadd 写入，/gamestatus 查看，/logingame 使用） */
+  gameAccountsFile: string;
   /** /autoreg 不带参数时使用的默认密码；留空则必须手动输入 */
   defaultGamePassword: string;
   /** 是否允许在玩家聊天栏回复（只影响玩家主动输入的命令；自动流程永远只写控制台） */
@@ -91,7 +92,7 @@ export interface FileConfig {
   updateCheck?: Partial<UpdateCheckConfig>;
   automation?: Partial<AutomationConfig>;
   nameProtect?: Partial<NameProtectConfig>;
-  antiCheat?: Partial<AntiCheatConfig>;
+  serverNameSpoof?: Partial<ServerNameSpoofConfig>;
 }
 
 /* ------------------------------------------------------------ 默认值 */
@@ -119,6 +120,7 @@ const DEFAULT_UPDATE_CHECK: UpdateCheckConfig = {
 const DEFAULT_AUTOMATION: AutomationConfig = {
   enabled: true,
   gameAccountFile: "game-account.txt",
+  gameAccountsFile: "game-accounts.txt",
   defaultGamePassword: "",
   inGameReplies: true,
   autoLoginOnJoin: true,
@@ -131,6 +133,24 @@ const DEFAULT_NAME_PROTECT: NameProtectConfig = {
   chat: true,
   scoreboard: true,
 };
+
+/** 服务器名伪装（只改客户端显示） */
+export interface ServerNameSpoofConfig {
+  enabled: boolean;
+  /** 替换规则，按顺序执行 */
+  mappings: Array<{ from: string; to: string }>;
+  /** 是否忽略大小写 */
+  caseInsensitive: boolean;
+  targets: { chat: boolean; tab: boolean; scoreboard: boolean; title: boolean; brand: boolean };
+}
+
+export const DEFAULT_SERVER_NAME_SPOOF: ServerNameSpoofConfig = {
+  enabled: true,
+  caseInsensitive: true,
+  mappings: [{ from: "imc", to: "heypixel" }],
+  targets: { chat: true, tab: true, scoreboard: true, title: true, brand: true },
+};
+
 
 /* -------------------------------------------------------- 文件读取 */
 
@@ -198,117 +218,67 @@ export function getConfigFilePath(): string {
 
 /** 首次启动时写出来的默认配置（带注释）。这份文件在 .gitignore 里，不会提交。 */
 export const DEFAULT_CONFIG_TEMPLATE = `{
-  // ============================================================
-  //  Eaglercraft Reverse Proxy - 主配置文件
-  //
-  //  这份文件是首次启动时自动生成的，不会提交到仓库（已在 .gitignore）。
-  //  优先级：环境变量  >  本文件  >  代码内置默认值
-  //  支持 // 行注释与 /* */ 块注释（不是标准 JSON，但本程序能读）
-  //  路径类配置若为相对路径，按程序启动目录解析
-  //
-  //  也可以在线改：/config set <键> <值>     （例：/config set nameProtect.enabled false）
-  //                /config get <键>
-  // ============================================================
 
-  // ---------------------------- 代理监听 ----------------------------
-  "tcpHost": "0.0.0.0",              // Minecraft 客户端连接的监听地址
-  "tcpPort": 25565,                  // 监听端口；被占用时改这里或设 REVERSE_PROXY_PORT
-  "eaglerServer": "wss://mc.smgoro.com",  // 上游 Eaglercraft (WebSocket) 服务器
-  "eaglerOrigin": "https://ws.imc.re",    // 上游校验用 Origin；不带可能被踢出
-  "eaglerUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36", // 上游校验用浏览器 UA
-  "maxPlayers": 1,                   // 同时允许几个玩家连接
-  "defaultSkinId": 0,                // 默认皮肤 ID
-  "debug": true,                     // 详细日志（等价于 DEBUG 环境变量）
+  "tcpHost": "0.0.0.0",
+  "tcpPort": 25565,
+  "eaglerServer": "wss://mc.smgoro.com",
+  "eaglerOrigin": "https://ws.imc.re",
+  "eaglerUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  "maxPlayers": 1,
+  "defaultSkinId": 0,
+  "debug": true,
 
-  // ------------------------- 随机 ID（防追踪） -------------------------
   "randomId": {
-    "auto": true,                    // false = 完全关闭随机 ID，直接用客户端真实 ID
-    "mode": "startup",               // startup = 每次启动一个；perConnection = 每个玩家一个
-    "length": 8                      // 3-16
+    "auto": true,
+    "mode": "startup",
+    "length": 8
   },
 
-  // ---------------------------- 控制台 ----------------------------
   "console": {
-    "autoHelp": false,               // 启动时自动打印命令列表（默认关，自己敲 /help）
-    "autoStatus": false,             // 启动时自动打印一次账号状态
-    "echo": true                     // true = 自己接管输入并回显；false = 交给终端回显
+    "autoHelp": false,
+    "autoStatus": false,
+    "echo": true
   },
 
-  // ---------------------------- 公告刷屏 ----------------------------
-  // 控制台 + 游戏内聊天栏循环推送项目公告。
-  // 想关掉就把 enabled 改成 false；嫌慢/嫌快就改 intervalMs（毫秒，最小 1000）。
   "announce": {
-    "enabled": true,                 // false = 完全不刷屏
-    "intervalMs": 10000,             // 刷屏间隔：默认 10 秒
-    "console": true,                 // 是否刷到控制台
-    "inGameChat": true               // 是否刷到游戏内聊天栏
-  },
-
-  // ---------------------------- 更新提示 ----------------------------
-  // 启动时把本地 version.json 的 editDate 和 GitHub 上的比，
-  // 不一致就提示更新；取不到就静默跳过（断网不影响使用）。
-  "updateCheck": {
-    "enabled": true,                 // false = 不检查更新
-    "repo": "HertaTeam/IMCProxy-Free", // GitHub 仓库 owner/repo
-    "timeoutMs": 6000,               // 单次请求超时
-    "notifyInGame": true             // 发现新版本时也推到游戏内聊天栏
-  },
-
-  // ---------------- 反作弊（参考型：只告警，不踢人、不改包） ----------------
-  // 告警同时输出到 imcp 控制台和玩家游戏内聊天栏；控制台用 /anticheat 查看。
-  "antiCheat": {
     "enabled": true,
-    "threshold": 1.0,                // 移动容差（方块）
-    "latency": 600,                  // 延迟补偿（ms），SpeedC 用
-    "vlClearTicks": 6000,            // 每多少 tick 清一次违规计数；-1 = 不清
-    "alertBuffer": true,             // true = 按各检查的 buffer 累积后告警
-    "experimental": false,           // 实验性检查：ReachA / MotionA / ScaffoldA
+    "intervalMs": 10000,
     "console": true,
-    "inGameChat": true,
-    "checks": {
-      "AutoBlockA": true,
-      "AutoClickerA": true,
-      "NoSlowA": true,
-      "ReachA": false,
-      "BlinkA": true,
-      "FlyA": true,
-      "GroundSpoofA": true,
-      "GroundSpoofB": true,
-      "MotionA": false,
-      "NoFallA": true,
-      "SpeedA": true,
-      "SpeedB": true,
-      "SpeedC": true,
-      "ScaffoldA": false,
-      "ScaffoldB": true,
-      "ScaffoldC": true,
-      "Simulation": true
-    }
+    "inGameChat": true
   },
 
-  // ------------------------ 游戏内自动化 ------------------------
-  // 在游戏聊天栏输入的命令会被代理拦截（不发给服务器）：
-  //   /autoreg [密码]            注册并把账号密码写入 TXT（省略密码则用下面的默认密码）
-  //   /autologin                 读 TXT 自动 /login
-  //   /autostatus                查看状态
+  "updateCheck": {
+    "enabled": true,
+    "repo": "HertaTeam/IMCProxy-Free",
+    "timeoutMs": 6000,
+    "notifyInGame": true
+  },
+
   "automation": {
     "enabled": true,
-    "gameAccountFile": "game-account.txt",   // 游戏账号（凭据！）
-    "defaultGamePassword": "114514",         // /autoreg 不带参数时使用；留空则必须手动输入
-    "inGameReplies": true,                   // 是否允许在游戏聊天栏回复自己敲的命令
-    "autoLoginOnJoin": true,                 // 见「请使用 /login」自动登录
-    "autoRegisterOnJoin": true               // 见「请使用 /reg」自动注册
+    "gameAccountFile": "game-account.txt",
+    "gameAccountsFile": "game-accounts.txt",
+    "defaultGamePassword": "114514",
+    "inGameReplies": true,
+    "autoLoginOnJoin": true,
+    "autoRegisterOnJoin": true
   },
 
-  // ------------------------ nameprotect ------------------------
-  // 只改你客户端界面上看到的名字：玩家列表 / 聊天栏（含被提及）/ 计分板。
-  // 发给服务端的封包一个字节都不动，这个设置本身也从不发给服务器或回传客户端。
+  "serverNameSpoof": {
+    "enabled": true,
+    "caseInsensitive": true,
+    "mappings": [
+      { "from": "imc", "to": "heypixel" }
+    ],
+    "targets": { "chat": true, "tab": true, "scoreboard": true, "title": true, "brand": true }
+  },
+
   "nameProtect": {
     "enabled": true,
-    "name": "我是gay",                        // 客户端上显示的自定义名称
-    "playlist": true,                        // 玩家列表 / Tab
-    "chat": true,                            // 聊天栏（含被提及）
-    "scoreboard": true                       // 计分板
+    "name": "我是gay",
+    "playlist": true,
+    "chat": true,
+    "scoreboard": true
   }
 }
 `;
@@ -597,6 +567,7 @@ export function getAutomationConfig(): AutomationConfig {
   return {
     enabled: file.enabled ?? DEFAULT_AUTOMATION.enabled,
     gameAccountFile: resolvePath(file.gameAccountFile || DEFAULT_AUTOMATION.gameAccountFile),
+    gameAccountsFile: resolvePath(file.gameAccountsFile || DEFAULT_AUTOMATION.gameAccountsFile),
     defaultGamePassword: file.defaultGamePassword ?? DEFAULT_AUTOMATION.defaultGamePassword,
     inGameReplies: file.inGameReplies ?? DEFAULT_AUTOMATION.inGameReplies,
     autoLoginOnJoin: file.autoLoginOnJoin ?? DEFAULT_AUTOMATION.autoLoginOnJoin,
@@ -604,6 +575,27 @@ export function getAutomationConfig(): AutomationConfig {
   };
 }
 
+
+/** 服务器名伪装：读 config.json 的 serverNameSpoof（缺省 = imc → heypixel） */
+export function getServerNameSpoofConfig(): ServerNameSpoofConfig {
+  const file = loadFileConfig().serverNameSpoof ?? {};
+  const rawMappings = Array.isArray(file.mappings) ? file.mappings : DEFAULT_SERVER_NAME_SPOOF.mappings;
+  const mappings = rawMappings
+    .filter((m: any) => m && typeof m.from === "string" && typeof m.to === "string" && m.from.length > 0)
+    .map((m: any) => ({ from: String(m.from), to: String(m.to) }));
+  const targets = { ...DEFAULT_SERVER_NAME_SPOOF.targets, ...(file.targets ?? {}) };
+  return {
+    enabled: file.enabled ?? DEFAULT_SERVER_NAME_SPOOF.enabled,
+    caseInsensitive: file.caseInsensitive ?? DEFAULT_SERVER_NAME_SPOOF.caseInsensitive,
+    mappings: mappings.length > 0 ? mappings : DEFAULT_SERVER_NAME_SPOOF.mappings,
+    targets,
+  };
+}
+
+/** 账号列表文件（/gameadd 写入的那份） */
+export function getGameAccountsFile(): string {
+  return getAutomationConfig().gameAccountsFile;
+}
 export function getNameProtectConfig(): NameProtectConfig {
   const file = loadFileConfig().nameProtect ?? {};
   return {
@@ -633,17 +625,50 @@ export function getNameProtectConfig(): NameProtectConfig {
     randomIdMode: envConfig.randomIdMode ?? randomId.mode,
     randomIdLength: normalizeRandomIdLength(envConfig.randomIdLength ?? randomId.length),
     debug: envConfig.debug ?? file.debug ?? DEFAULT_FILE_CONFIG.debug,
-    antiCheat: {
-      enabled: file.antiCheat?.enabled ?? true,
-      threshold: file.antiCheat?.threshold ?? 1.0,
-      latency: file.antiCheat?.latency ?? 600,
-      vlClearTicks: file.antiCheat?.vlClearTicks ?? 6000,
-      alertBuffer: file.antiCheat?.alertBuffer ?? true,
-      experimental: file.antiCheat?.experimental ?? false,
-      console: file.antiCheat?.console ?? true,
-      inGameChat: file.antiCheat?.inGameChat ?? true,
-      checks: { ...(file.antiCheat?.checks ?? {}) },
-    },
     nameProtect: getNameProtectConfig(),
+    serverNameSpoof: getServerNameSpoofConfig(),
   };
+}
+
+/* ------------------------------------------------- 配置热更新 */
+
+export type ConfigChangeListener = (keyPath: string, value: unknown) => void;
+
+const configChangeListeners = new Set<ConfigChangeListener>();
+
+/** 订阅配置变更；返回取消订阅的函数 */
+export function onConfigChange(listener: ConfigChangeListener): () => void {
+  configChangeListeners.add(listener);
+  return () => configChangeListeners.delete(listener);
+}
+
+/** 通知所有订阅者 */
+export function notifyConfigChange(keyPath: string, value: unknown): void {
+  for (const listener of configChangeListeners) {
+    try {
+      listener(keyPath, value);
+    } catch {
+      /* 单个订阅者出错不影响其他 */
+    }
+  }
+}
+
+/** 改完立即生效的键（其余键仍然要重启） */
+export function isHotConfigKey(keyPath: string): boolean {
+  return (
+    keyPath === "debug" ||
+    keyPath.startsWith("nameProtect") ||
+    keyPath.startsWith("serverNameSpoof") ||
+    keyPath.startsWith("announce")
+  );
+}
+
+/**
+ * 修改配置并立即把变更推给运行时组件。
+ * 写盘失败时不会通知，避免内存与文件不一致。
+ */
+export function applyConfigValue(keyPath: string, value: unknown): { ok: boolean; message: string } {
+  const result = setConfigValue(keyPath, value);
+  if (result.ok) notifyConfigChange(keyPath, value);
+  return result;
 }
