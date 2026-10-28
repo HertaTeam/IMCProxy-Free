@@ -604,7 +604,9 @@ export class ReverseProxy extends EventEmitter {
       if (packetId === 0x40) {
         try {
           const reason = this.parseKickPacket(data);
-          this.logger.warn(`[${player.username}] Server kicked: ${color.red(reason)}`);
+          const lines = reason.split(/\n+/).filter((line) => line.length > 0);
+          this.logger.warn(`[${player.username}] Server kicked: ${color.red(lines[0] ?? "Unknown reason")}`);
+          for (const line of lines.slice(1)) this.logger.warn(`  ${color.red(line)}`);
         } catch {}
       }
 
@@ -662,22 +664,48 @@ export class ReverseProxy extends EventEmitter {
     });
   }
 
+  /**
+   * 解析踢出包（0x40）。
+   * 服务器给的 reason 是 JSON 聊天组件（可能嵌套 extra / color / bold，并带 \n），
+   * 这里还原成纯文本：颜色码去掉、空白收敛、保留换行，多行由调用方逐行打印。
+   */
   private parseKickPacket(data: Buffer): string {
     try {
-      data = data.subarray(1);
-      const reason = MineProtocol.readString(data);
-      let message = reason.value;
-
-      try {
-        const json = JSON.parse(message);
-        if (json.text) message = json.text;
-        else if (json.translate) message = json.translate;
-      } catch {}
-
-      return message;
+      const raw = MineProtocol.readString(data.subarray(1)).value;
+      return this.chatComponentToPlain(raw);
     } catch {
       return "Unknown reason";
     }
+  }
+
+  /** JSON 聊天组件 → 纯文本；不是 JSON 就按普通字符串处理 */
+  private chatComponentToPlain(raw: unknown): string {
+    const text = typeof raw === "string" ? raw : "";
+    const trimmed = text.trim();
+    if (!trimmed) return "";
+
+    // 不是 JSON 组件：去掉 § 码后按行整理
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      return this.normalizePlainLines(text);
+    }
+
+    try {
+      const formatted = this.chatToFormatted(JSON.parse(trimmed));
+      const plain = this.normalizePlainLines(formatted);
+      return plain || this.normalizePlainLines(text);
+    } catch {
+      return this.normalizePlainLines(text);
+    }
+  }
+
+  /** 去颜色码、去掉行内多余空格、丢空行，但保留换行结构 */
+  private normalizePlainLines(text: string): string {
+    return stripMcFormat(text)
+      .split(/\r?\n/)
+      .map((line) => line.replace(/[ \t]+/g, " ").trim())
+      .filter((line) => line.length > 0)
+      .join("\n")
+      .trim();
   }
 
   async stop(): Promise<void> {
