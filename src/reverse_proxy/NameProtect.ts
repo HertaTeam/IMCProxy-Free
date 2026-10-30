@@ -203,6 +203,28 @@ export class NameProtector {
     return changed;
   }
 
+  /** 改写后的 params 里凡是"看起来像 JSON"的字符串都必须能解析，否则视为危险 */
+  private allJsonFieldsValid(value: unknown, depth = 0): boolean {
+    if (depth > 6) return true;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return true;
+      try {
+        JSON.parse(trimmed);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (Array.isArray(value)) return value.every((item) => this.allJsonFieldsValid(item, depth + 1));
+    if (value && typeof value === "object") {
+      return Object.values(value as Record<string, unknown>).every((item) =>
+        this.allJsonFieldsValid(item, depth + 1)
+      );
+    }
+    return true;
+  }
+
   private warnOnce(message: string): void {
     if (this.warned) return;
     this.warned = true;
@@ -246,6 +268,12 @@ export class NameProtector {
     }
     if (!changed) return data;
 
+    // 兜底：任何被改写的 JSON 字段只要解析不了，就整包放弃改写
+    if (!this.allJsonFieldsValid(params)) {
+      this.warnOnce("Rewritten packet would contain invalid JSON, forwarding untouched.");
+      return data;
+    }
+
     let buffer: Buffer;
     try {
       buffer = this.serializer.createPacketBuffer({ name: packetName, params });
@@ -275,7 +303,8 @@ export class NameProtector {
           entry.name = replaced;
           changed = true;
         }
-        const display = this.replacePlain(entry?.displayName, listName, LIMIT.playerName);
+        // displayName 是 JSON 聊天组件（不是纯字符串），上限宽松；绝不能按名字长度截断
+        const display = this.replaceComponent(entry?.displayName, displayName, LIMIT.chat);
         if (display !== null) {
           entry.displayName = display;
           changed = true;

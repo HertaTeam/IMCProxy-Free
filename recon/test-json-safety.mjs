@@ -21,14 +21,26 @@ const uuid = '11111111-2222-3333-4444-555555555555';
 const cases = [];
 const push = (label, packet, pick) => cases.push({ label, packet, pick });
 
-// 1) player_info：纯字符串，应被截断到 16
+// 1) player_info：name 是纯字符串（截到 16），displayName 是 JSON 组件（不能被截断）
 push(
-  'player_info 名字',
+  'player_info name + displayName',
   ser.createPacketBuffer({
     name: 'player_info',
-    params: { action: 0, data: [{ UUID: uuid, name: 'Herta1337', properties: [] }] },
+    params: {
+      action: 0,
+      data: [
+        {
+          UUID: uuid,
+          name: 'Herta1337',
+          properties: [],
+          gamemode: 0,
+          ping: 0,
+          displayName: JSON.stringify({ text: 'Herta1337' }),
+        },
+      ],
+    },
   }),
-  (p) => p.data.params.data[0].name
+  (p) => JSON.stringify({ name: p.data.params.data[0].name, displayName: p.data.params.data[0].displayName })
 );
 
 // 2) chat：JSON 组件，必须合法且含完整名字
