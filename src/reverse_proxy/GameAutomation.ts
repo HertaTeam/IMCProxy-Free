@@ -261,6 +261,23 @@ export class GameAutomation {
       return;
     }
 
+    // 新登录方式（imc 改版后）：聊天栏直接发送"网页账号的密码"即可登录。
+    // free 版没有 imc 账号池，就用保存的游戏账号密码作为网页密码。
+    if (flat.includes("发送网页账号的密码") || flat.includes("网页账号的密码即可登录")) {
+      if (!this.getPending(player)) {
+        const saved = loadGameAccount(this.options.gameAccountFile);
+        const password = saved?.password || this.options.defaultGamePassword?.trim();
+        if (password) {
+          this.toConsole("imc offers chat-password login; sending the saved password");
+          this.pending.set(player, { kind: "login", password, at: Date.now() });
+          hooks.sendToServer(password);
+        } else {
+          this.toConsole("imc offers chat-password login but no password is saved (use /gameadd)");
+        }
+      }
+      return;
+    }
+
     // 图形验证码（地图读字）——脚本无法识别，必须人工
     if (flat.includes("请解决验证码") || flat.includes("验证码错误")) {
       this.toConsole("!! Manual map captcha required - solve it in game chat");
