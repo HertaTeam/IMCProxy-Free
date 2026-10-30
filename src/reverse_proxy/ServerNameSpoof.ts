@@ -47,6 +47,18 @@ export const DEFAULT_SERVER_NAME_SPOOF: ServerNameSpoofOptions = {
 /** 允许在 JSON 聊天组件里被替换的字段名 */
 const TEXT_KEYS = new Set(["text", "displayName", "prefix", "suffix", "itemName", "header", "footer"]);
 
+/** 各字段的协议上限（字符）；超了就放弃该字段，避免客户端 JSON/长度错误 */
+const FIELD_LIMIT = {
+  chat: 32767,
+  title: 32767,
+  header: 32767,
+  objectiveDisplay: 32,
+  teamDisplay: 32,
+  teamPrefix: 16,
+  teamSuffix: 16,
+} as const;
+
+
 export class ServerNameSpoofer {
   private logger = new Logger("ServerName");
   private deserializer = createDeserializer({
@@ -89,20 +101,18 @@ export class ServerNameSpoofer {
     return out;
   }
 
-  /** 递归替换聊天组件 JSON 里的文本字段 */
-  private replaceComponent(json: unknown): unknown {
-    if (typeof json === "string") {
-      const trimmed = json.trim();
-      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return this.replaceText(json);
-      try {
-        const parsed = JSON.parse(trimmed);
-        const replaced = this.walkComponent(parsed);
-        return JSON.stringify(replaced);
-      } catch {
-        return this.replaceText(json);
-      }
+  /** 递归替换聊天组件 JSON 里的文本字段；始终返回字符串 */
+  private replaceComponent(json: unknown): string {
+    if (typeof json !== "string") return typeof json === "undefined" ? "" : String(json);
+    const trimmed = json.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return this.replaceText(json);
+    try {
+      const parsed = JSON.parse(trimmed);
+      const replaced = this.walkComponent(parsed);
+      return JSON.stringify(replaced);
+    } catch {
+      return this.replaceText(json);
     }
-    return json;
   }
 
   private walkComponent(node: any): any {
@@ -209,7 +219,7 @@ export class ServerNameSpoofer {
         for (const key of ["displayText", "value"] as const) {
           if (typeof params[key] === "string") {
             const after = this.replaceComponent(params[key]);
-            if (after !== params[key]) {
+            if (after !== params[key] && after.length <= FIELD_LIMIT.objectiveDisplay) {
               params[key] = after;
               changed = true;
             }
@@ -232,13 +242,19 @@ export class ServerNameSpoofer {
       }
       case "scoreboard_team": {
         let changed = false;
-        for (const key of ["displayName", "prefix", "suffix"] as const) {
-          if (typeof params[key] === "string") {
-            const after = this.replaceComponent(params[key]);
-            if (after !== params[key]) {
-              params[key] = after;
-              changed = true;
-            }
+        // 1.8 里队伍显示名是 name（JSON 组件），team 才是内部 ID
+        const limits: Record<string, number> = {
+          name: FIELD_LIMIT.teamDisplay,
+          displayName: FIELD_LIMIT.teamDisplay,
+          prefix: FIELD_LIMIT.teamPrefix,
+          suffix: FIELD_LIMIT.teamSuffix,
+        };
+        for (const key of ["name", "displayName", "prefix", "suffix"] as const) {
+          if (typeof params[key] !== "string") continue;
+          const after = this.replaceComponent(params[key]);
+          if (after !== params[key] && after.length <= limits[key]) {
+            params[key] = after;
+            changed = true;
           }
         }
         return changed;

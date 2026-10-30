@@ -14,10 +14,11 @@ const { createDeserializer, createSerializer, states } = mcp;
  * 关键点：**只改"服务端 → 客户端"方向的封包**。
  * 发给服务端的封包一个字节都不动，这个设置本身也从不发给服务器或回传客户端。
  *
- * 长度限制（重要）：
- *   MC 1.8 的字符串字段有硬上限，超了客户端会直接断线，例如
- *   `The received string length is longer than maximum allowed (36 > 16)`。
- *   所以每个字段替换后都会按协议上限截断，超限就直接放弃该字段的替换。
+ * 两种字段，处理方式不同（这是之前客户端被踢的原因）：
+ *   1) 纯字符串字段（玩家名 / 队伍名 / 计分项名）→ 直接替换，超长按协议上限截断
+ *   2) JSON 聊天组件字段（chat / 计分板显示文本 / 队伍前后缀）→ 解析组件、
+ *      只替换组件里的文本节点、再序列化；**绝不按字符截断 JSON**，
+ *      否则客户端会报 MalformedJsonException / Unterminated string 并断开。
  */
 
 export interface NameProtectOptions {
@@ -48,9 +49,17 @@ const LIMIT = {
   chat: 32767,
 } as const;
 
+/** 组件里允许替换的文本键 */
+const COMPONENT_TEXT_KEYS = new Set(["text", "displayName", "prefix", "suffix"]);
+
 /** 按 UTF-16 长度截断（和 MC 的 String.length 判定完全一致） */
 function clampTo(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
+}
+
+function looksLikeJson(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
 }
 
 export class NameProtector {
@@ -76,17 +85,14 @@ export class NameProtector {
   /** 需要被替换掉的原名（客户端名 + 服务端看到的随机 ID 名） */
   private names: string[];
   private warned = false;
-  private warnedTooLong = false;
 
   constructor(resolveOptions: () => NameProtectOptions, resolveDisplayName: () => string, names: string[]) {
     this.resolveOptions = resolveOptions;
     this.resolveDisplayName = resolveDisplayName;
     this.names = names.filter((n) => typeof n === "string" && n.length > 0);
 
-    // 配置里的名字太长时只提示一次；实际替换会按字段上限截断
     const configured = this.resolveDisplayName();
-    if (configured.length > LIMIT.playerName && this.options.enabled) {
-      this.warnedTooLong = true;
+    if (configured.length > LIMIT.playerName && this.resolveOptions().enabled) {
       this.logger.warn(
         `Display name is ${configured.length} chars; player list allows ${LIMIT.playerName}. ` +
           `It will be truncated to avoid a client kick (set a shorter nameProtect.name to avoid this).`
@@ -109,12 +115,8 @@ export class NameProtector {
     return false;
   }
 
-  /**
-   * 把字符串里的原名都换成显示名。
-   * @param max 该字段的协议上限；替换后超限会被截断
-   * @returns null = 没有变化
-   */
-  private replace(text: unknown, displayName: string, max: number): string | null {
+  /** 纯字符串替换：换完按字段上限截断 */
+  private replacePlain(text: unknown, displayName: string, max: number): string | null {
     if (typeof text !== "string" || !text) return null;
     let out = text;
     for (const name of this.names) {
@@ -122,6 +124,89 @@ export class NameProtector {
     }
     if (out === text) return null;
     return clampTo(out, max);
+  }
+
+  /**
+   * JSON 聊天组件替换：解析 → 只改文本节点 → 重新序列化。
+   * 放不下时先把名字按剩余空间截短再试，仍然放不下才放弃该字段（返回 null），
+   * 绝不截断 JSON 本身。
+   */
+  private replaceComponent(jsonText: unknown, displayName: string, max: number): string | null {
+    if (typeof jsonText !== "string" || !jsonText) return null;
+
+    if (!looksLikeJson(jsonText)) {
+      // 极少数服务器在这里放纯文本
+      return this.replacePlain(jsonText, displayName, max);
+    }
+
+    const attempt = (name: string): string | null => {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // 原包本身不是合法 JSON：原样不动
+        return null;
+      }
+      if (!this.walkComponent(parsed, name)) return null;
+      try {
+        return JSON.stringify(parsed);
+      } catch {
+        return null;
+      }
+    };
+
+    const full = attempt(displayName);
+    if (full === null) return null;
+    if (full.length <= max) return full;
+
+    // 放不下：逐步缩短名字，直到能塞进字段上限
+    for (let length = displayName.length - 1; length >= 1; length--) {
+      const shortened = displayName.slice(0, length);
+      if (shortened === displayName) continue;
+      const candidate = attempt(shortened);
+      if (candidate !== null && candidate.length <= max) return candidate;
+    }
+
+    this.warnOnce(
+      `Rewritten component does not fit the ${max}-char field even after shortening the name; keeping the original.`
+    );
+    return null;
+  }
+
+  /** 递归替换组件里的文本；返回是否发生改动 */
+  private walkComponent(node: any, displayName: string): boolean {
+    if (node === null || typeof node !== "object") return false;
+    let changed = false;
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (this.walkComponent(item, displayName)) changed = true;
+      }
+      return changed;
+    }
+
+    for (const key of Object.keys(node)) {
+      const value = node[key];
+      if (COMPONENT_TEXT_KEYS.has(key) && typeof value === "string") {
+        let out = value;
+        for (const name of this.names) {
+          if (out.includes(name)) out = out.split(name).join(displayName);
+        }
+        if (out !== value) {
+          node[key] = out;
+          changed = true;
+        }
+      } else if (key === "extra" || key === "with") {
+        if (this.walkComponent(value, displayName)) changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private warnOnce(message: string): void {
+    if (this.warned) return;
+    this.warned = true;
+    this.logger.warn(message);
   }
 
   /**
@@ -156,10 +241,7 @@ export class NameProtector {
     try {
       changed = this.apply(packetName, params, displayName, listName);
     } catch (err) {
-      if (!this.warned) {
-        this.warned = true;
-        this.logger.warn(`Rewrite failed, forwarding untouched: ${(err as Error).message}`);
-      }
+      this.warnOnce(`Rewrite failed, forwarding untouched: ${(err as Error).message}`);
       return data;
     }
     if (!changed) return data;
@@ -168,19 +250,13 @@ export class NameProtector {
     try {
       buffer = this.serializer.createPacketBuffer({ name: packetName, params });
     } catch (err) {
-      if (!this.warned) {
-        this.warned = true;
-        this.logger.warn(`Re-encode failed, forwarding untouched: ${(err as Error).message}`);
-      }
+      this.warnOnce(`Re-encode failed, forwarding untouched: ${(err as Error).message}`);
       return data;
     }
 
-    // 最后再兜一次底：重新编码的包如果比原包畸形（长度超限）就丢弃改写
+    // 兜底：重新编码的包异常膨胀就丢弃改写
     if (buffer.length > data.length + 512) {
-      if (!this.warned) {
-        this.warned = true;
-        this.logger.warn("Rewrite produced an oversized packet, forwarding untouched.");
-      }
+      this.warnOnce("Rewrite produced an oversized packet, forwarding untouched.");
       return data;
     }
     return buffer;
@@ -193,13 +269,13 @@ export class NameProtector {
     if (packetName === PLAYLIST_PACKET) {
       if (!Array.isArray(params.data)) return false;
       for (const entry of params.data) {
-        // 玩家列表的 name 只有 16 字符，必须用截断后的名字
-        const replaced = this.replace(entry?.name, listName, LIMIT.playerName);
+        // 玩家列表的 name 是纯字符串，上限 16
+        const replaced = this.replacePlain(entry?.name, listName, LIMIT.playerName);
         if (replaced !== null) {
           entry.name = replaced;
           changed = true;
         }
-        const display = this.replace(entry?.displayName, listName, LIMIT.playerName);
+        const display = this.replacePlain(entry?.displayName, listName, LIMIT.playerName);
         if (display !== null) {
           entry.displayName = display;
           changed = true;
@@ -209,7 +285,7 @@ export class NameProtector {
     }
 
     if (packetName === CHAT_PACKET) {
-      const replaced = this.replace(params.message, displayName, LIMIT.chat);
+      const replaced = this.replaceComponent(params.message, displayName, LIMIT.chat);
       if (replaced !== null) {
         params.message = replaced;
         changed = true;
@@ -218,16 +294,20 @@ export class NameProtector {
     }
 
     if (packetName === "scoreboard_score") {
-      const replaced = this.replace(params.itemName, displayName, LIMIT.scoreEntity);
-      if (replaced !== null) {
-        params.itemName = replaced;
-        changed = true;
+      // itemName / entityName 都是纯字符串
+      for (const key of ["itemName", "entityName", "scoreName"] as const) {
+        if (typeof params[key] !== "string") continue;
+        const replaced = this.replacePlain(params[key], displayName, LIMIT.scoreEntity);
+        if (replaced !== null) {
+          params[key] = replaced;
+          changed = true;
+        }
       }
       return changed;
     }
 
     if (packetName === "scoreboard_objective") {
-      const replaced = this.replace(params.displayText, displayName, LIMIT.objectiveDisplay);
+      const replaced = this.replaceComponent(params.displayText, displayName, LIMIT.objectiveDisplay);
       if (replaced !== null) {
         params.displayText = replaced;
         changed = true;
@@ -236,26 +316,30 @@ export class NameProtector {
     }
 
     if (packetName === "scoreboard_team") {
+      // 注意 1.8 的字段含义：team = 内部队伍 ID（纯字符串，不动），
+      // name = 客户端显示的队伍名（JSON 组件，上限 32）。
+      const componentFields: Array<[string, number]> = [
+        ["name", LIMIT.teamDisplay],
+        ["displayName", LIMIT.teamDisplay],
+        ["prefix", LIMIT.teamPrefix],
+        ["suffix", LIMIT.teamSuffix],
+      ];
+      for (const [key, max] of componentFields) {
+        const replaced = this.replaceComponent(params[key], displayName, max);
+        if (replaced !== null) {
+          params[key] = replaced;
+          changed = true;
+        }
+      }
+
       const players: unknown = params.players;
       if (Array.isArray(players)) {
         for (let i = 0; i < players.length; i++) {
-          const replaced = this.replace(players[i], displayName, LIMIT.scoreEntity);
+          const replaced = this.replacePlain(players[i], displayName, LIMIT.scoreEntity);
           if (replaced !== null) {
             players[i] = replaced;
             changed = true;
           }
-        }
-      }
-      const limits: Record<string, number> = {
-        prefix: LIMIT.teamPrefix,
-        suffix: LIMIT.teamSuffix,
-        name: listName.length <= LIMIT.teamName ? listName.length : LIMIT.teamName,
-      };
-      for (const key of ["prefix", "suffix", "name"] as const) {
-        const replaced = this.replace(params[key], key === "name" ? listName : displayName, limits[key]);
-        if (replaced !== null) {
-          params[key] = replaced;
-          changed = true;
         }
       }
       return changed;
