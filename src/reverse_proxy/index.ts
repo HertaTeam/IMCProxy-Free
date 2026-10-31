@@ -32,7 +32,7 @@ async function main() {
   const automationConfig = getAutomationConfig();
   verboseLogging(config.debug);
 
-  logger.section("Eaglercraft Reverse Proxy");
+  logger.section("IMCProxy-Free");
   logger.kv("Config file", getConfigFilePath());
   logger.kv("Log file", logFile ?? "(disabled - cannot create logs folder)");
   logger.kv("Backup folder", ensureBackupDir());

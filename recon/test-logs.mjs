@@ -58,7 +58,7 @@ lines.slice(0, 6).forEach((l) => console.log('      ' + l.slice(0, 100)));
 ok(/log started at/.test(text1), '有开始标记');
 // 注意：Windows 上 kill() 是强杀，exit 钩子不执行，所以集成测试这里不断言收尾标记。
 // 收尾标记由 closeRunLog() 负责，下面用单元测试单独验证。
-ok(/Eaglercraft Reverse Proxy/.test(text1), '记录了启动分节标题');
+ok(/IMCProxy(-Free)?/.test(text1), '记录了启动分节标题');
 ok(/Config file/.test(text1), '记录了配置文件路径');
 ok(/Tab completes command names/.test(text1), '记录了 /help 的输出');
 ok(!/\x1b\[/.test(text1), '日志文件里没有 ANSI 颜色码');

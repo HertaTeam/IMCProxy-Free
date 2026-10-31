@@ -125,7 +125,7 @@ export class ReverseProxy extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    this.logger.info("Starting Eaglercraft Reverse Proxy...");
+    this.logger.info("Starting IMCProxy-Free...");
     this.logger.info(`TCP Server: ${this.config.tcpHost}:${this.config.tcpPort}`);
     this.logger.info(`Eaglercraft Server: ${this.config.eaglerServer}`);
     this.initRandomIdMode();
@@ -133,7 +133,7 @@ export class ReverseProxy extends EventEmitter {
     const server = createServer({
       host: this.config.tcpHost,
       port: this.config.tcpPort,
-      motd: "§6Eaglercraft Reverse Proxy§r\n§7Connect with vanilla MC 1.8.9",
+      motd: "§6IMCProxy-Free§r\n§7Connect with vanilla MC 1.8.9",
       "online-mode": false,
       version: "1.8.9",
       maxPlayers: this.config.maxPlayers,

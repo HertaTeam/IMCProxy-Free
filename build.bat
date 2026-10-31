@@ -4,7 +4,7 @@ cd /d "%~dp0"
 chcp 65001 >nul
 
 echo ==================================================
-echo   Eaglercraft Reverse Proxy
+echo   IMCProxy-Free
 echo   Build
 echo ==================================================
 echo.

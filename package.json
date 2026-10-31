@@ -1,5 +1,5 @@
 {
-  "name": "eaglercraft-reverse-proxy",
+  "name": "imcproxy-free",
   "version": "1.0.0",
   "description": "让原版 Minecraft 1.8.9 客户端连接 Eaglercraft WebSocket 服务器",
   "main": "build/reverse_proxy/index.js",

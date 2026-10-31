@@ -1,11 +1,11 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Eaglercraft Reverse Proxy - Build and Run
+title IMCProxy-Free - Build and Run
 chcp 65001 >nul
 
 echo ==================================================
-echo   Eaglercraft Reverse Proxy
+echo   IMCProxy-Free
 echo   Build and Run
 echo ==================================================
 echo.

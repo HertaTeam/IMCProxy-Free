@@ -1,10 +1,34 @@
-![IMCProxy-Free](src/imcplogo.jpg)
+![IMCProxy-Free](src/assets/imcplogo.jpg)
+
+<p align="center">
+  <img src="src/assets/01-default.png" alt="01-default" width="9%" />
+  <img src="src/assets/02-9f3669f6.jpg" alt="02-9f3669f6" width="9%" />
+  <img src="src/assets/03-d1661936.webp" alt="03-d1661936" width="9%" />
+  <img src="src/assets/04-naven.jpg" alt="04-naven" width="9%" />
+  <img src="src/assets/10-213b61c8.png" alt="10-213b61c8" width="9%" />
+  <img src="src/assets/11-20861eb1.png" alt="11-20861eb1" width="9%" />
+  <img src="src/assets/12-8b4f3459.png" alt="12-8b4f3459" width="9%" />
+  <img src="src/assets/13-82d56970.png" alt="13-82d56970" width="9%" />
+  <img src="src/assets/18-0efd3296.jpg" alt="18-0efd3296" width="9%" />
+  <img src="src/assets/05-qq20260730-092440.png" alt="05-qq20260730-092440" width="9%" />
+</p>
+<p align="center">
+  <img src="src/assets/06-qq20260730-092430.png" alt="06-qq20260730-092430" width="10%" />
+  <img src="src/assets/07-0429f799.png" alt="07-0429f799" width="10%" />
+  <img src="src/assets/08-minecraft-steve.jpg" alt="08-minecraft-steve" width="10%" />
+  <img src="src/assets/09-b8e54ed8.jpg" alt="09-b8e54ed8" width="10%" />
+  <img src="src/assets/14-qq20260704-161420.png" alt="14-qq20260704-161420" width="10%" />
+  <img src="src/assets/15-dc33c2d9.png" alt="15-dc33c2d9" width="10%" />
+  <img src="src/assets/16-qq20260627-223452.png" alt="16-qq20260627-223452" width="10%" />
+  <img src="src/assets/17-4149804e.jpg" alt="17-4149804e" width="10%" />
+  <img src="src/assets/19-65c0b720.jpg" alt="19-65c0b720" width="10%" />
+</p>
 
 # IMCProxy-Free
 
 让原版 Minecraft 1.8.9 客户端连接 Eaglercraft WebSocket 服务器。
 
-![fuckimc](src/fuckimc.png)
+![fuckimc](src/assets/fuckimc.png)
 
 在增加反作弊和增加氪金玩家无敌之间选择了删除玩家
 
@@ -92,3 +116,4 @@ npm run start
 - [Eaglercraft](https://github.com/lax1dude/eaglerxserver) - Eaglercraft 服务器实现
 - [minecraft-protocol](https://github.com/PrismarineJS/node-minecraft-protocol) - Minecraft 协议库
 - 爱来自某人/Eaglercraft-Reverse-Proxy(已关库跑路)
+
