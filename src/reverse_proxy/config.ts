@@ -78,6 +78,10 @@ export interface NameProtectConfig {
 export interface FileConfig {
   tcpHost?: string;
   tcpPort?: number;
+  /** 1.12.2 监听端口（Eaglercraft 1.12.2 客户端） */
+  tcpPort1122?: number;
+  /** 是否开启 1.12.2 监听 */
+  enable1122?: boolean;
   eaglerServer?: string;
   /** 连上游时带的 Origin 头（部分服务器不带就踢人） */
   eaglerOrigin?: string;
@@ -97,9 +101,11 @@ export interface FileConfig {
 
 /* ------------------------------------------------------------ 默认值 */
 
-export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort" | "eaglerServer" | "eaglerOrigin" | "eaglerUserAgent" | "maxPlayers" | "defaultSkinId" | "debug">> = {
+export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort" | "tcpPort1122" | "enable1122" | "eaglerServer" | "eaglerOrigin" | "eaglerUserAgent" | "maxPlayers" | "defaultSkinId" | "debug">> = {
   tcpHost: "0.0.0.0",
   tcpPort: 25565,
+  tcpPort1122: 25566,
+  enable1122: true,
   eaglerServer: "wss://mc.smgoro.com",
   eaglerOrigin: "https://ws.imc.re",
   eaglerUserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -221,6 +227,8 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
 
   "tcpHost": "0.0.0.0",
   "tcpPort": 25565,
+  "tcpPort1122": 25566,
+  "enable1122": true,
   "eaglerServer": "wss://mc.smgoro.com",
   "eaglerOrigin": "https://ws.imc.re",
   "eaglerUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -617,6 +625,8 @@ export function getNameProtectConfig(): NameProtectConfig {
   return {
     tcpHost: envConfig.tcpHost ?? file.tcpHost ?? DEFAULT_FILE_CONFIG.tcpHost,
     tcpPort: envConfig.tcpPort ?? file.tcpPort ?? DEFAULT_FILE_CONFIG.tcpPort,
+    tcpPort1122: envConfig.tcpPort1122 ?? file.tcpPort1122 ?? DEFAULT_FILE_CONFIG.tcpPort1122,
+    enable1122: envConfig.enable1122 ?? file.enable1122 ?? DEFAULT_FILE_CONFIG.enable1122,
     eaglerServer: envConfig.eaglerServer ?? file.eaglerServer ?? DEFAULT_FILE_CONFIG.eaglerServer,
     eaglerOrigin: envConfig.eaglerOrigin ?? file.eaglerOrigin ?? DEFAULT_FILE_CONFIG.eaglerOrigin,
     eaglerUserAgent: envConfig.eaglerUserAgent ?? file.eaglerUserAgent ?? DEFAULT_FILE_CONFIG.eaglerUserAgent,

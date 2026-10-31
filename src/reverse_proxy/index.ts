@@ -37,6 +37,12 @@ async function main() {
   logger.kv("Log file", logFile ?? "(disabled - cannot create logs folder)");
   logger.kv("Backup folder", ensureBackupDir());
   logger.kv("Listen", `${config.tcpHost}:${config.tcpPort}`);
+  logger.kv(
+    "Listen (1.12.2 Beta)",
+    config.enable1122 === false
+      ? "disabled (enable1122 = false)"
+      : `${config.tcpHost}:${config.tcpPort1122 ?? 25566} — MOTD shows a Beta notice`
+  );
   logger.kv("Upstream server", config.eaglerServer);
   logger.kv("Max players", config.maxPlayers);
   logger.kv("Random ID mode", config.randomIdMode ?? "off");

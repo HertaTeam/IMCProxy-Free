@@ -1,5 +1,6 @@
 import mcp from "minecraft-protocol";
 import { Logger } from "../logger.js";
+import { profileFor, type ProtocolProfile } from "./ProtocolProfile.js";
 
 const { createDeserializer, createSerializer, states } = mcp;
 
@@ -35,7 +36,12 @@ export interface NameProtectOptions {
 
 const CHAT_PACKET = "chat";
 const PLAYLIST_PACKET = "player_info";
-const SCOREBOARD_PACKETS = new Set(["scoreboard_objective", "scoreboard_score", "scoreboard_team"]);
+const SCOREBOARD_PACKETS = new Set([
+  "scoreboard_objective",
+  "scoreboard_score",
+  "scoreboard_team",
+  "teams",
+]);
 
 /** MC 1.8 各字段的字符串上限（字符数，不是字节数） */
 const LIMIT = {
@@ -64,21 +70,33 @@ function looksLikeJson(text: string): boolean {
 
 export class NameProtector {
   private logger = new Logger("NameProtect");
-  private deserializer = createDeserializer({
-    state: states.PLAY,
-    // 注意：createDeserializer 的 isServer 语义与 createSerializer 相反
-    isServer: false, // -> toClient
-    version: "1.8.9",
-    customPackets: null,
-    // 运行时支持，类型定义里没有
-    noErrorLogging: true,
-  } as any);
-  private serializer = createSerializer({
-    state: states.PLAY,
-    isServer: true, // -> toClient
-    version: "1.8.9",
-    customPackets: null,
-  });
+  private deserializerInstance: any = null;
+  private serializerInstance: any = null;
+
+  private get deserializer(): any {
+    if (!this.deserializerInstance) {
+      this.deserializerInstance = createDeserializer({
+        state: states.PLAY,
+        isServer: false,
+        version: this.profile.version,
+        customPackets: null,
+        noErrorLogging: true,
+      } as any);
+    }
+    return this.deserializerInstance;
+  }
+
+  private get serializer(): any {
+    if (!this.serializerInstance) {
+      this.serializerInstance = createSerializer({
+        state: states.PLAY,
+        isServer: true,
+        version: this.profile.version,
+        customPackets: null,
+      });
+    }
+    return this.serializerInstance;
+  }
 
   private resolveOptions: () => NameProtectOptions;
   private resolveDisplayName: () => string;
@@ -86,7 +104,15 @@ export class NameProtector {
   private names: string[];
   private warned = false;
 
-  constructor(resolveOptions: () => NameProtectOptions, resolveDisplayName: () => string, names: string[]) {
+  private readonly profile: ProtocolProfile;
+
+  constructor(
+    resolveOptions: () => NameProtectOptions,
+    resolveDisplayName: () => string,
+    names: string[],
+    profile?: ProtocolProfile
+  ) {
+    this.profile = profile ?? profileFor("1.8.9");
     this.resolveOptions = resolveOptions;
     this.resolveDisplayName = resolveDisplayName;
     this.names = names.filter((n) => typeof n === "string" && n.length > 0);
@@ -243,7 +269,14 @@ export class NameProtector {
     const listName = clampTo(displayName, LIMIT.playerName);
     const packetId = data[0];
     // 只处理可能含玩家名的几个包：0x02 chat / 0x38 player_info / 0x3B-0x3E scoreboard
-    if (packetId !== 0x02 && packetId !== 0x38 && packetId !== 0x3b && packetId !== 0x3c && packetId !== 0x3e) {
+    const ids = this.profile.ids;
+    if (
+      packetId !== ids.chat &&
+      packetId !== ids.playerInfo &&
+      packetId !== ids.objective &&
+      packetId !== ids.score &&
+      packetId !== ids.team
+    ) {
       return data;
     }
 
@@ -344,7 +377,7 @@ export class NameProtector {
       return changed;
     }
 
-    if (packetName === "scoreboard_team") {
+    if (packetName === "scoreboard_team" || packetName === "teams") {
       // 注意 1.8 的字段含义：team = 内部队伍 ID（纯字符串，不动），
       // name = 客户端显示的队伍名（JSON 组件，上限 32）。
       const componentFields: Array<[string, number]> = [

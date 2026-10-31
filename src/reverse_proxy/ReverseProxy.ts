@@ -19,6 +19,8 @@ import {
 } from "./RandomId.js";
 import type { AutomationHooks, GameAutomation } from "./GameAutomation.js";
 
+import { profileFor, type McVersion, type ProtocolProfile } from "./ProtocolProfile.js";
+
 const { createSerializer } = mcp;
 
 export type { RandomIdMode };
@@ -49,6 +51,10 @@ const MC_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 export interface ReverseProxyConfig {
   tcpHost: string;
   tcpPort: number;
+  /** 1.12.2 专用端口 */
+  tcpPort1122?: number;
+  /** 是否开启 1.12.2 监听 */
+  enable1122?: boolean;
   eaglerServer: string;
   /**
    * 连上游时带的 Origin 头。
@@ -76,12 +82,14 @@ export interface ConnectedPlayer {
   uuid: string;
   eaglerClient: EaglerClient;
   mcClient: any;
+  /** 该连接使用的协议档案 */
+  profile: ProtocolProfile;
 }
 
 export class ReverseProxy extends EventEmitter {
   private config: ReverseProxyConfig;
   private logger: Logger;
-  private mcServer: Server | null = null;
+  private mcServers: Server[] = [];
   private running = false;
   private players: Map<string, ConnectedPlayer> = new Map();
   private playerCleanups: Map<string, () => boolean> = new Map();
@@ -93,7 +101,7 @@ export class ReverseProxy extends EventEmitter {
   private automation: GameAutomation | null = null;
   private nameProtectOptions: NameProtectOptions;
   private serverNameOptions: ServerNameSpoofOptions = DEFAULT_SERVER_NAME_SPOOF;
-  private serverNameSpoofer: ServerNameSpoofer;
+  private serverNameSpoofers: Map<string, ServerNameSpoofer> = new Map();
   private playerHooks: Map<string, AutomationHooks> = new Map();
 
   constructor(config: ReverseProxyConfig, automation?: GameAutomation | null) {
@@ -111,7 +119,6 @@ export class ReverseProxy extends EventEmitter {
       scoreboard: false,
     };
     this.serverNameOptions = config.serverNameSpoof ?? DEFAULT_SERVER_NAME_SPOOF;
-    this.serverNameSpoofer = new ServerNameSpoofer(() => this.serverNameOptions);
     this.logger = new Logger("ReverseProxy");
   }
 
@@ -125,40 +132,76 @@ export class ReverseProxy extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    this.logger.info("Starting IMCProxy-Free...");
-    this.logger.info(`TCP Server: ${this.config.tcpHost}:${this.config.tcpPort}`);
-    this.logger.info(`Eaglercraft Server: ${this.config.eaglerServer}`);
+    this.logger.info("Starting IMCProxy...");
     this.initRandomIdMode();
 
-    const server = createServer({
-      host: this.config.tcpHost,
-      port: this.config.tcpPort,
-      motd: "§6IMCProxy-Free§r\n§7Connect with vanilla MC 1.8.9",
-      "online-mode": false,
-      version: "1.8.9",
-      maxPlayers: this.config.maxPlayers,
-      beforeLogin: (client: any) => this.applyClientIdentity(client),
-    });
-    this.mcServer = server;
-
-    server.on("login", (mcClient: any) => {
-      void this.handlePlayerConnect(mcClient);
-    });
-
-    try {
-      await once(server, "listening");
-    } catch (err) {
-      this.mcServer = null;
-      throw err;
+    const targets: Array<{ version: McVersion; port: number; motd: string }> = [
+      {
+        version: "1.8.9",
+        port: this.config.tcpPort,
+        motd: "§6IMCProxy§r\n§7Connect with vanilla MC 1.8.9",
+      },
+    ];
+    if (this.config.enable1122 !== false) {
+      targets.push({
+        version: "1.12.2",
+        port: this.config.tcpPort1122 ?? 25566,
+        motd: "§6IMCProxy§r\n§7MC 1.12.2 §e[Beta]§r\n§7Connect with vanilla MC 1.12.2",
+      });
     }
 
-    this.running = true;
-    server.on("error", (err: Error) => {
-      this.logger.error(`Server error: ${err.message}`);
-    });
+    for (const target of targets) {
+      const profile = profileFor(target.version);
+      this.logger.info(`TCP Server (${profile.label}): ${this.config.tcpHost}:${target.port}`);
 
+      const server = createServer({
+        host: this.config.tcpHost,
+        port: target.port,
+        motd: target.motd,
+        "online-mode": false,
+        version: target.version,
+        maxPlayers: this.config.maxPlayers,
+        beforeLogin: (client: any) => {
+          client.proxyMcVersion = target.version;
+          this.applyClientIdentity(client);
+        },
+      });
+
+      server.on("login", (mcClient: any) => {
+        void this.handlePlayerConnect(mcClient, profile);
+      });
+
+      try {
+        await once(server, "listening");
+      } catch (err) {
+        this.logger.error(
+          `Cannot listen on ${this.config.tcpHost}:${target.port} (${profile.label}): ${(err as Error).message}`
+        );
+        continue;
+      }
+
+      server.on("error", (err: Error) => {
+        this.logger.error(`Server error (${profile.label}): ${err.message}`);
+      });
+      this.mcServers.push(server);
+    }
+
+    if (this.mcServers.length === 0) throw new Error("No listener could be started");
+    this.logger.info(`Eaglercraft Server: ${this.config.eaglerServer}`);
+
+    this.running = true;
     this.logger.info("Reverse Proxy started successfully!");
     this.emit("started");
+  }
+
+  /** 按版本取（并缓存）服务器名伪装器 */
+  private spooferFor(profile: ProtocolProfile): ServerNameSpoofer {
+    let spoofer = this.serverNameSpoofers.get(profile.version);
+    if (!spoofer) {
+      spoofer = new ServerNameSpoofer(() => this.serverNameOptions, profile);
+      this.serverNameSpoofers.set(profile.version, spoofer);
+    }
+    return spoofer;
   }
 
   private initRandomIdMode(): void {
@@ -383,7 +426,7 @@ export class ReverseProxy extends EventEmitter {
     );
   }
 
-  private async handlePlayerConnect(mcClient: any): Promise<void> {
+  private async handlePlayerConnect(mcClient: any, profile: ProtocolProfile): Promise<void> {
     const realUsername: string = mcClient.proxyRealUsername ?? mcClient.username;
     this.logger.info(`Player ${realUsername} is connecting...`);
 
@@ -430,6 +473,7 @@ export class ReverseProxy extends EventEmitter {
       skinData: this.config.defaultSkinId,
       origin: this.config.eaglerOrigin,
       userAgent: this.config.eaglerUserAgent,
+      vanillaProtocol: profile.protocol,
     });
     this.pendingPlayers.set(realUsername, { eaglerClient, mcClient });
 
@@ -473,6 +517,7 @@ export class ReverseProxy extends EventEmitter {
         uuid: eaglerClient.uuid,
         eaglerClient,
         mcClient,
+        profile,
       };
       this.players.set(realUsername, player);
       this.setupPacketForwarding(player);
@@ -493,12 +538,12 @@ export class ReverseProxy extends EventEmitter {
   }
 
   private setupPacketForwarding(player: ConnectedPlayer): void {
-    const { mcClient, eaglerClient } = player;
+    const { mcClient, eaglerClient, profile } = player;
 
     const clientSerializer = createSerializer({
       state: states.PLAY,
       isServer: false,
-      version: "1.8.9",
+      version: profile.version,
       customPackets: null,
     });
 
@@ -506,7 +551,7 @@ export class ReverseProxy extends EventEmitter {
     const serverSerializer = createSerializer({
       state: states.PLAY,
       isServer: true,
-      version: "1.8.9",
+      version: profile.version,
       customPackets: null,
     });
 
@@ -514,7 +559,8 @@ export class ReverseProxy extends EventEmitter {
     const nameProtector = new NameProtector(
       () => this.nameProtectOptions,
       () => this.resolveDisplayName(),
-      [player.username, player.upstreamUsername]
+      [player.username, player.upstreamUsername],
+      profile
     );
 
     const hooks: AutomationHooks = {
@@ -589,7 +635,7 @@ export class ReverseProxy extends EventEmitter {
       const packetId = data[0];
 
 
-      if (packetId === 0x02) {
+      if (packetId === profile.ids.chat) {
         const { plain, colored } = this.parseChatPacket(data);
         if (plain) {
           // 把服务端的 § 颜色映射到控制台；多行消息拆成多行日志
@@ -601,7 +647,7 @@ export class ReverseProxy extends EventEmitter {
         }
       }
 
-      if (packetId === 0x40) {
+      if (packetId === profile.ids.kick) {
         try {
           const reason = this.parseKickPacket(data);
           const lines = reason.split(/\n+/).filter((line) => line.length > 0);
@@ -613,7 +659,7 @@ export class ReverseProxy extends EventEmitter {
       try {
         // nameprotect 只在这里生效；发给服务端的封包完全不经过它
         // 先做服务器名伪装，再做 nameprotect（两者都只改服务端→客户端方向）
-        mcClient.writeRaw(nameProtector.rewrite(this.serverNameSpoofer.rewrite(data)));
+        mcClient.writeRaw(nameProtector.rewrite(this.spooferFor(profile).rewrite(data)));
         packetsToClient++;
       } catch (err) {
         if (this.packetLogging) {
@@ -727,9 +773,9 @@ export class ReverseProxy extends EventEmitter {
     }
     this.pendingPlayers.clear();
 
-    const server = this.mcServer;
-    this.mcServer = null;
-    if (server) {
+    const servers = this.mcServers;
+    this.mcServers = [];
+    for (const server of servers) {
       const closed = once(server, "close");
       server.close();
       await closed;

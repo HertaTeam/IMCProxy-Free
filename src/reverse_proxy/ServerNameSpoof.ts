@@ -1,5 +1,6 @@
 import mcp from "minecraft-protocol";
 import { Logger } from "../logger.js";
+import { profileFor, type ProtocolProfile } from "./ProtocolProfile.js";
 
 const { createDeserializer, createSerializer, states } = mcp;
 
@@ -61,22 +62,43 @@ const FIELD_LIMIT = {
 
 export class ServerNameSpoofer {
   private logger = new Logger("ServerName");
-  private deserializer = createDeserializer({
-    state: states.PLAY,
-    isServer: false, // -> toClient
-    version: "1.8.9",
-    customPackets: null,
-    noErrorLogging: true,
-  } as any);
-  private serializer = createSerializer({
-    state: states.PLAY,
-    isServer: true, // -> toClient
-    version: "1.8.9",
-    customPackets: null,
-  });
+  private deserializerInstance: any = null;
+  private serializerInstance: any = null;
+
+  private get deserializer(): any {
+    if (!this.deserializerInstance) {
+      this.deserializerInstance = createDeserializer({
+        state: states.PLAY,
+        isServer: false,
+        version: this.profile.version,
+        customPackets: null,
+        noErrorLogging: true,
+      } as any);
+    }
+    return this.deserializerInstance;
+  }
+
+  private get serializer(): any {
+    if (!this.serializerInstance) {
+      this.serializerInstance = createSerializer({
+        state: states.PLAY,
+        isServer: true,
+        version: this.profile.version,
+        customPackets: null,
+      });
+    }
+    return this.serializerInstance;
+  }
   private warned = false;
 
-  constructor(private readonly resolveOptions: () => ServerNameSpoofOptions) {}
+  private readonly profile: ProtocolProfile;
+
+  constructor(
+    private readonly resolveOptions: () => ServerNameSpoofOptions,
+    profile?: ProtocolProfile
+  ) {
+    this.profile = profile ?? profileFor("1.8.9");
+  }
 
   isEnabled(): boolean {
     const options = this.resolveOptions();
@@ -137,13 +159,14 @@ export class ServerNameSpoofer {
 
     const packetId = data[0];
     const options = this.resolveOptions();
-    const isBrand = packetId === 0x3f;
+    const ids = this.profile.ids;
+    const isBrand = packetId === ids.customPayload;
 
     const wanted =
-      (packetId === 0x02 && options.targets.chat) ||
-      (packetId === 0x47 && options.targets.tab) ||
-      ((packetId === 0x3b || packetId === 0x3c || packetId === 0x3e) && options.targets.scoreboard) ||
-      (packetId === 0x45 && options.targets.title) ||
+      (packetId === ids.chat && options.targets.chat) ||
+      (packetId === ids.tabHeader && options.targets.tab) ||
+      ((packetId === ids.objective || packetId === ids.score || packetId === ids.team) && options.targets.scoreboard) ||
+      (packetId === ids.title && options.targets.title) ||
       (isBrand && options.targets.brand);
     if (!wanted) return data;
 
@@ -240,7 +263,8 @@ export class ServerNameSpoofer {
         }
         return changed;
       }
-      case "scoreboard_team": {
+      case "scoreboard_team":
+      case "teams": {
         let changed = false;
         // 1.8 里队伍显示名是 name（JSON 组件），team 才是内部 ID
         const limits: Record<string, number> = {

@@ -19,6 +19,8 @@ export interface EaglerClientOptions {
   origin?: string;
   /** WebSocket 握手时带的 User-Agent */
   userAgent?: string;
+  /** 原版协议号（1.8.9 = 47，1.12.2 = 340） */
+  vanillaProtocol?: number;
 }
 
 export interface HandshakeResult {
@@ -38,6 +40,7 @@ export class EaglerClient extends EventEmitter {
   private skinData: Buffer | number;
   private origin: string;
   private userAgent: string;
+  private vanillaProtocol: number;
 
   public uuid: string = "";
   public appliedUsername: string = "";
@@ -54,6 +57,7 @@ export class EaglerClient extends EventEmitter {
     this.skinData = options.skinData ?? 0;
     this.origin = options.origin?.trim() ?? "";
     this.userAgent = options.userAgent?.trim() ?? "";
+    this.vanillaProtocol = options.vanillaProtocol ?? VANILLA_PROTOCOL_VERSION;
   }
 
   async connect(): Promise<HandshakeResult> {
@@ -201,7 +205,7 @@ export class EaglerClient extends EventEmitter {
         MineProtocol.writeShort(0x01),
         MineProtocol.writeShort(NETWORK_VERSION),
         MineProtocol.writeShort(0x01),
-        MineProtocol.writeShort(VANILLA_PROTOCOL_VERSION),
+        MineProtocol.writeShort(this.vanillaProtocol),
         MineProtocol.writeString("EaglerReverseProxy"),
         MineProtocol.writeString("1.0.0"),
         [0x00],
