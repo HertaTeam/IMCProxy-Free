@@ -97,6 +97,7 @@ export interface FileConfig {
   automation?: Partial<AutomationConfig>;
   nameProtect?: Partial<NameProtectConfig>;
   serverNameSpoof?: Partial<ServerNameSpoofConfig>;
+  overlay?: Partial<OverlayConfig>;
 }
 
 /* ------------------------------------------------------------ 默认值 */
@@ -138,6 +139,28 @@ const DEFAULT_NAME_PROTECT: NameProtectConfig = {
   playlist: true,
   chat: true,
   scoreboard: true,
+};
+
+/** imc-overlay：把战绩表嵌进 Tab 列表 */
+export interface OverlayConfig {
+  enabled: boolean;
+  /** auto = 由日志判断是否起床战争；bedwars = 强制；off = 关闭 */
+  mode: "auto" | "bedwars" | "off";
+  apiBase: string;
+  refreshSeconds: number;
+  topRows: number;
+  decorateTab: boolean;
+  timeoutMs: number;
+}
+
+export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
+  enabled: true,
+  mode: "auto",
+  apiBase: "https://api.imc.re",
+  refreshSeconds: 300,
+  topRows: 10,
+  decorateTab: true,
+  timeoutMs: 6000,
 };
 
 /** 服务器名伪装（只改客户端显示） */
@@ -272,6 +295,15 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
     "autoRegisterOnJoin": true
   },
 
+  "overlay": {
+    "enabled": true,
+    "mode": "auto",
+    "apiBase": "https://api.imc.re",
+    "refreshSeconds": 300,
+    "topRows": 10,
+    "decorateTab": true,
+    "timeoutMs": 6000
+  },
   "serverNameSpoof": {
     "enabled": true,
     "caseInsensitive": true,
@@ -584,6 +616,23 @@ export function getAutomationConfig(): AutomationConfig {
 }
 
 
+/** imc-overlay：读 config.json 的 overlay 段 */
+export function getOverlayConfig(): OverlayConfig {
+  const file = loadFileConfig().overlay ?? {};
+  const mode = file.mode === "bedwars" || file.mode === "off" ? file.mode : "auto";
+  const refresh = Number(file.refreshSeconds ?? DEFAULT_OVERLAY_CONFIG.refreshSeconds);
+  const rows = Number(file.topRows ?? DEFAULT_OVERLAY_CONFIG.topRows);
+  return {
+    enabled: file.enabled ?? DEFAULT_OVERLAY_CONFIG.enabled,
+    mode,
+    apiBase: (file.apiBase || DEFAULT_OVERLAY_CONFIG.apiBase).trim(),
+    refreshSeconds: Number.isFinite(refresh) && refresh >= 30 ? refresh : DEFAULT_OVERLAY_CONFIG.refreshSeconds,
+    topRows: Number.isFinite(rows) && rows > 0 && rows <= 20 ? Math.floor(rows) : DEFAULT_OVERLAY_CONFIG.topRows,
+    decorateTab: file.decorateTab ?? DEFAULT_OVERLAY_CONFIG.decorateTab,
+    timeoutMs: Number(file.timeoutMs ?? DEFAULT_OVERLAY_CONFIG.timeoutMs) || DEFAULT_OVERLAY_CONFIG.timeoutMs,
+  };
+}
+
 /** 服务器名伪装：读 config.json 的 serverNameSpoof（缺省 = imc → heypixel） */
 export function getServerNameSpoofConfig(): ServerNameSpoofConfig {
   const file = loadFileConfig().serverNameSpoof ?? {};
@@ -637,6 +686,7 @@ export function getNameProtectConfig(): NameProtectConfig {
     debug: envConfig.debug ?? file.debug ?? DEFAULT_FILE_CONFIG.debug,
     nameProtect: getNameProtectConfig(),
     serverNameSpoof: getServerNameSpoofConfig(),
+    overlay: getOverlayConfig(),
   };
 }
 

@@ -20,6 +20,7 @@ import {
 import type { AutomationHooks, GameAutomation } from "./GameAutomation.js";
 
 import { profileFor, type McVersion, type ProtocolProfile } from "./ProtocolProfile.js";
+import { ImcOverlay, DEFAULT_OVERLAY, type OverlayOptions } from "./ImcOverlay.js";
 
 const { createSerializer } = mcp;
 
@@ -55,6 +56,8 @@ export interface ReverseProxyConfig {
   tcpPort1122?: number;
   /** 是否开启 1.12.2 监听 */
   enable1122?: boolean;
+  /** imc-overlay 配置 */
+  overlay?: OverlayOptions;
   eaglerServer: string;
   /**
    * 连上游时带的 Origin 头。
@@ -101,6 +104,8 @@ export class ReverseProxy extends EventEmitter {
   private automation: GameAutomation | null = null;
   private nameProtectOptions: NameProtectOptions;
   private serverNameOptions: ServerNameSpoofOptions = DEFAULT_SERVER_NAME_SPOOF;
+  private overlayOptions: OverlayOptions = DEFAULT_OVERLAY;
+  private overlays: Map<string, ImcOverlay> = new Map();
   private serverNameSpoofers: Map<string, ServerNameSpoofer> = new Map();
   private playerHooks: Map<string, AutomationHooks> = new Map();
 
@@ -119,6 +124,7 @@ export class ReverseProxy extends EventEmitter {
       scoreboard: false,
     };
     this.serverNameOptions = config.serverNameSpoof ?? DEFAULT_SERVER_NAME_SPOOF;
+    this.overlayOptions = config.overlay ?? DEFAULT_OVERLAY;
     this.logger = new Logger("ReverseProxy");
   }
 
@@ -192,6 +198,16 @@ export class ReverseProxy extends EventEmitter {
     this.running = true;
     this.logger.info("Reverse Proxy started successfully!");
     this.emit("started");
+  }
+
+  /** 按版本取（并缓存）Tab overlay */
+  private overlayFor(profile: ProtocolProfile): ImcOverlay {
+    let overlay = this.overlays.get(profile.version);
+    if (!overlay) {
+      overlay = new ImcOverlay(() => this.overlayOptions, profile);
+      this.overlays.set(profile.version, overlay);
+    }
+    return overlay;
   }
 
   /** 按版本取（并缓存）服务器名伪装器 */
@@ -556,6 +572,9 @@ export class ReverseProxy extends EventEmitter {
     });
 
     // nameprotect：把自己在客户端上的显示名换掉（只改服务端→客户端方向的封包）
+    const overlay = this.overlayFor(profile);
+    overlay.setSelf(player.upstreamUsername);
+
     const nameProtector = new NameProtector(
       () => this.nameProtectOptions,
       () => this.resolveDisplayName(),
@@ -643,6 +662,7 @@ export class ReverseProxy extends EventEmitter {
             const shown = line.trimEnd();
             if (shown) this.logger.info(`[${player.username}] Server chat: ${mcToAnsi(shown)}`);
           }
+          this.overlayFor(profile).noteServerChat(plain);
           this.automation?.handleServerMessage(player.username, plain, hooks);
         }
       }
@@ -659,7 +679,14 @@ export class ReverseProxy extends EventEmitter {
       try {
         // nameprotect 只在这里生效；发给服务端的封包完全不经过它
         // 先做服务器名伪装，再做 nameprotect（两者都只改服务端→客户端方向）
-        mcClient.writeRaw(nameProtector.rewrite(this.spooferFor(profile).rewrite(data)));
+        const overlay = this.overlayFor(profile);
+        if (packetId === profile.ids.joinGame) overlay.noteWorldChange();
+        // overlay 在 nameprotect 之前：查询用服务端真实 ID，显示交给 nameprotect
+        let out = this.spooferFor(profile).rewrite(data);
+        out = overlay.rewriteTabPacket(out) ?? out;
+        out = overlay.rewritePlayerInfo(out, [player.username, player.upstreamUsername]) ?? out;
+        out = nameProtector.rewrite(out);
+        mcClient.writeRaw(out);
         packetsToClient++;
       } catch (err) {
         if (this.packetLogging) {

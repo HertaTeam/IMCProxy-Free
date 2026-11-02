@@ -25,6 +25,10 @@ export interface PacketIds {
   title: number;
   /** playerlist_header（Tab 页眉/页脚） */
   tabHeader: number;
+  /** 进入世界（login / join_game） */
+  joinGame: number;
+  /** 重生（切换维度） */
+  respawn: number;
   /** custom_payload（MC|Brand） */
   customPayload: number;
 }
@@ -55,6 +59,8 @@ export const PROFILES: Record<McVersion, ProtocolProfile> = {
       title: 0x45,
       tabHeader: 0x47,
       customPayload: 0x3f,
+      joinGame: 0x01,
+      respawn: 0x07,
     },
   },
   "1.12.2": {
@@ -72,6 +78,8 @@ export const PROFILES: Record<McVersion, ProtocolProfile> = {
       title: 0x48,
       tabHeader: 0x4a,
       customPayload: 0x18,
+      joinGame: 0x23,
+      respawn: 0x35,
     },
   },
 };
