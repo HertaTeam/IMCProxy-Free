@@ -1,4 +1,6 @@
 import { Logger, color } from "../logger.js";
+import { changelogFor } from "./Changelog.js";
+import { buildSettingSpecs, describeSetting, formatSettingValue, parseSettingValue, type SettingSpec } from "./SettingCommands.js";
 import { type RandomIdMode } from "./RandomId.js";
 import { consoleUi } from "./ConsoleUi.js";
 import {
@@ -57,6 +59,7 @@ const ID_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
 /** 控制台可用命令（Tab 补全与 /help 都用它） */
 const CONSOLE_COMMANDS = [
+  "changelog",
   "randomname", "randomid", "rid",
   "setname", "setid", "sid",
   "log", "debug",
@@ -84,10 +87,15 @@ export class ConsoleCommands {
   private lastWasCR = false;
 
   constructor(target: ConsoleCommandTarget, options: { echo?: boolean } = {}) {
+    this.settingSpecs = buildSettingSpecs();
+    this.settingIndex = new Map(this.settingSpecs.map((spec) => [spec.command, spec]));
     this.logger = new Logger("Console");
     this.target = target;
     this.echoEnabled = options.echo !== false;
   }
+
+  private settingSpecs: SettingSpec[] = [];
+  private settingIndex: Map<string, SettingSpec> = new Map();
 
   private echoEnabled: boolean;
 
@@ -228,6 +236,12 @@ export class ConsoleCommands {
     const command = (separator === -1 ? body : body.slice(0, separator)).toLowerCase();
     const argument = separator === -1 ? "" : body.slice(separator + 1).trim();
 
+    const spec = this.settingIndex.get(command);
+    if (spec) {
+      this.applySetting(spec, argument);
+      return;
+    }
+
     switch (command) {
       case "randomname":
       case "randomid":
@@ -241,19 +255,12 @@ export class ConsoleCommands {
         this.setRandomId(argument);
         break;
 
-      case "proxy":
-      case "random":
-      case "console":
-      case "automation":
-      case "nameprotect":
-      case "servername":
-      case "announce":
-      case "updatecheck":
-        this.settingsCommand(command, argument);
+      case "changelog":
+        this.showChangelog(argument);
         break;
 
       case "settings":
-        this.settingsOverview();
+        this.settingsList(argument);
         break;
 
       case "update":
@@ -296,6 +303,18 @@ export class ConsoleCommands {
     }
   }
 
+  /** /changelog [all|版本号] —— 打印更新日志 */
+  private showChangelog(argument: string): void {
+    const entries = changelogFor(argument);
+    if (entries.length === 0) {
+      this.logger.warn(`No changelog entry matches "${argument}"`);
+      return;
+    }
+    for (const entry of entries) {
+      this.logger.section(`v${entry.version} (${entry.date})`);
+      for (const change of entry.changes) this.logger.info(`  - ${change}`);
+    }
+  }
   private resetRandomId(): void {
     this.target.resetRandomId();
     this.printApplied();
@@ -394,7 +413,8 @@ export class ConsoleCommands {
     }
 
     const token = body.toLowerCase();
-    const matches = CONSOLE_COMMANDS.filter((c) => c.startsWith(token));
+    const candidates = CONSOLE_COMMANDS.concat(this.settingSpecs.map((spec) => spec.command));
+    const matches = candidates.filter((c) => c.startsWith(token));
 
     if (matches.length === 0) {
       this.logger.info(`No command starts with "${token}"`);
@@ -420,73 +440,65 @@ export class ConsoleCommands {
    * 每个配置分区一个命令：/nameprotect [子项] [值]
    * 不带参数 = 显示该分区当前值；带子项 = 读；带值 = 改（热键立即生效）。
    */
-  private settingsCommand(section: string, argument: string): void {
-    const prefix = SECTION_PREFIX[section] ?? section + ".";
-    const all = listConfigKeys();
-    const keys = all.filter((k) => (prefix === "" ? !k.includes(".") : k.startsWith(prefix)));
-    const parts = argument.split(/\s+/).filter(Boolean);
+  /** 执行单个配置项命令：无参数查看，有参数先校验再写入 */
+  private applySetting(spec: SettingSpec, argument: string): void {
+    const current = getConfigValue(spec.key);
 
-    if (parts.length === 0) {
-      this.logger.section(section);
-      if (keys.length === 0) {
-        this.logger.warn('No settings under "' + section + '".');
-        return;
-      }
-      for (const key of keys) {
-        const short = prefix === "" ? key : key.slice(prefix.length);
-        this.logger.kv("  " + short, JSON.stringify(getConfigValue(key)));
-      }
-      this.logger.info("");
-      this.logger.info("  usage: /" + section + " <setting> <value>");
-      this.logger.info("  example: /" + section + " " + (keys[0] ?? "").slice(prefix.length) + " <value>");
+    if (!argument) {
+      this.logger.info("/" + spec.key);
+      this.logger.info("  " + describeSetting(spec, current));
       return;
     }
 
-    const sub = parts[0];
-    const key = all.find((k) => k === prefix + sub || k === sub) ?? prefix + sub;
-
-    if (!all.includes(key)) {
-      this.logger.warn('Unknown setting "' + sub + '" for /' + section + ".");
-      this.logger.info("  available: " + keys.map((k) => (prefix === "" ? k : k.slice(prefix.length))).join(", "));
+    const parsed = parseSettingValue(spec, argument);
+    if (!parsed.ok) {
+      this.logger.warn('Invalid value for "' + spec.key + '": ' + parsed.message);
+      this.logger.info("  " + describeSetting(spec, current));
       return;
     }
 
-    if (parts.length === 1) {
-      this.logger.info(key + " = " + JSON.stringify(getConfigValue(key)));
-      return;
-    }
-
-    const raw = parts.slice(1).join(" ");
-    const result = applyConfigValue(key, parseConfigValue(raw));
+    const result = applyConfigValue(spec.key, parsed.value);
     if (!result.ok) {
-      this.logger.warn(result.message);
+      this.logger.error('Cannot apply "' + spec.key + '": ' + result.message);
       return;
     }
-    this.logger.info("Saved: " + key + " = " + JSON.stringify(getConfigValue(key)));
-    if (isHotConfigKey(key)) this.logger.info("Applied immediately (hot).");
-    else this.logger.info("Takes effect after a restart.");
+    const hot = isHotConfigKey(spec.key);
+    this.logger.info(spec.key + " = " + formatSettingValue(getConfigValue(spec.key)) + " (" + (hot ? "applied now" : "restart required") + ")");
+    this.logger.info("  config.json updated");
   }
 
-  /** /settings —— 打印全部配置 + 所有可改键 */
-  private settingsOverview(): void {
-    this.printConfig();
-    const keys = listConfigKeys();
+  /** /settings [section] —— 只读列出全部配置命令 */
+  private settingsList(argument: string): void {
+    const filter = argument.trim().toLowerCase();
+    const groups = new Map<string, SettingSpec[]>();
+    for (const spec of this.settingSpecs) {
+      const section = spec.key.includes(".") ? spec.key.split(".")[0] : "proxy";
+      if (filter && section.toLowerCase() !== filter && spec.key.toLowerCase().indexOf(filter) < 0) continue;
+      const list = groups.get(section) ?? [];
+      list.push(spec);
+      groups.set(section, list);
+    }
+
+    if (groups.size === 0) {
+      this.logger.warn('No setting matches "' + argument + '"');
+      return;
+    }
+
+    for (const [section, specs] of groups) {
+      this.logger.section(section);
+      for (const spec of specs) {
+        this.logger.info("  /" + spec.key.padEnd(28) + " " + formatSettingValue(getConfigValue(spec.key)));
+      }
+    }
     this.logger.info("");
-    this.logger.info("Editable settings (" + keys.length + "):");
-    for (const key of keys) this.logger.info("  " + key + " = " + JSON.stringify(getConfigValue(key)));
-    this.logger.info("");
-    this.logger.info("  Change one with the matching section command, e.g. /nameprotect enabled false");
+    this.logger.info(this.settingSpecs.length + " settings. Run /<key> to inspect one, /<key> <value> to change it.");
   }
-
-
-  /* -------------------------------------------------- 游戏账号管理 */
 
   private gameAccountsFile(): string {
     return getGameAccountsFile();
   }
 
-  /** /gamestatus —— 查看已保存的账号（含密码） */
-  private gameStatus(): void {
+  gameStatus(): void {
     const file = this.gameAccountsFile();
     const accounts = loadGameAccounts(file);
     this.logger.section("Game accounts");
@@ -503,12 +515,10 @@ export class ConsoleCommands {
     this.logger.info("  /gamedel <#n | account>          remove an account");
   }
 
-  /** /logingame [ref | account password] —— 用保存的账号登录 */
-  private loginGame(argument: string): void {
+  loginGame(argument: string): void {
     const file = this.gameAccountsFile();
     const parts = argument.split(/\s+/).filter(Boolean);
     let account: { account: string; password: string } | null = null;
-
     if (parts.length >= 2) {
       account = { account: parts[0], password: parts[1] };
       upsertGameAccount(account.account, account.password, file);
@@ -528,7 +538,6 @@ export class ConsoleCommands {
       }
       account = { account: accounts[0].account, password: accounts[0].password };
     }
-
     const sent = this.target.sendChatToServer("/login " + account.password);
     if (sent === 0) {
       this.logger.warn("No player is connected right now; connect a client first.");
@@ -537,8 +546,7 @@ export class ConsoleCommands {
     this.logger.info('Sent /login for "' + account.account + '" (' + sent + ' session(s)).');
   }
 
-  /** /gameadd <account> <password> [note] */
-  private gameAdd(argument: string): void {
+  gameAdd(argument: string): void {
     const parts = argument.split(/\s+/).filter(Boolean);
     if (parts.length < 2) {
       this.logger.warn("Usage: /gameadd <account> <password> [note]");
@@ -551,8 +559,7 @@ export class ConsoleCommands {
     this.logger.info('Saved "' + account + '" to ' + this.gameAccountsFile());
   }
 
-  /** /gamedel <#n | account> */
-  private gameDelete(argument: string): void {
+  gameDelete(argument: string): void {
     const ref = argument.trim();
     if (!ref) {
       this.logger.warn("Usage: /gamedel <#n | account>");
@@ -568,14 +575,10 @@ export class ConsoleCommands {
     this.logger.info('Removed "' + result.removed.account + '".');
   }
 
-  /* -------------------------------------------------------- 更新提示 */
-
-  /** /update [status] —— 手动检查 GitHub 上的版本 */
-  private updateCommand(argument: string): void {
+  updateCommand(argument: string): void {
     const sub = argument.trim().toLowerCase();
     const state = loadVersionState();
     const config = getUpdateCheckConfig();
-
     this.logger.section("Update");
     this.logger.kv("Version file", VERSION_FILE);
     this.logger.kv("Edit date", state.editDate);
@@ -584,9 +587,7 @@ export class ConsoleCommands {
     if (state.remoteEditDate) this.logger.kv("Remote edit date", state.remoteEditDate);
     this.logger.kv("Repo", "github.com/" + config.repo);
     this.logger.kv("Enabled", config.enabled);
-
     if (sub === "status") return;
-
     this.logger.info("Checking...");
     void checkForUpdates(config).then((result) => {
       if (result.status === "outdated") this.logger.warn(result.message);
@@ -671,7 +672,9 @@ export class ConsoleCommands {
     this.logger.info("  /servername   [setting] [value]".padEnd(52) + "settings of servername");
     this.logger.info("  /announce     [setting] [value]".padEnd(52) + "settings of announce");
     this.logger.info("  /updatecheck  [setting] [value]".padEnd(52) + "settings of updatecheck");
-    this.logger.info("  /settings                         show the effective config + every editable key");
+    this.logger.info("  /<section>.<key> [value]          inspect or change one setting");
+    this.logger.info("  /settings [section]              list every setting command (read only)");
+    this.logger.info("  /changelog [all|version]           show the changelog");
     this.logger.info("");
     this.logger.info("  game accounts:");
     this.logger.info("  /gamestatus                       list saved accounts (account + password)");

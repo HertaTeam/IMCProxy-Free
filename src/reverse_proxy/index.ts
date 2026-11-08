@@ -4,6 +4,7 @@ import { GameAutomation } from "./GameAutomation.js";
 import { consoleUi } from "./ConsoleUi.js";
 import { ensureBackupDir } from "./Backup.js";
 import { printBanner } from "./Banner.js";
+import { changelogLines } from "./Changelog.js";
 import { startAnnounce } from "./Announce.js";
 import { bumpDailyCount, checkForUpdates, formatNotice } from "./UpdateCheck.js";
 import {
@@ -48,6 +49,10 @@ async function main() {
   logger.kv("Random ID mode", config.randomIdMode ?? "off");
   logger.kv("Debug mode", config.debug);
   logger.kv("Console", `autoHelp=${consoleConfig.autoHelp} autoStatus=${consoleConfig.autoStatus} echo=${consoleConfig.echo}`);
+
+  logger.section("Changelog");
+  for (const line of changelogLines(2)) logger.info(line);
+  logger.info("Run /changelog to see the full history.");
 
   // 版本：当日启动次数 +1（跨天清零），并把 editDate 打出来
   const updateConfig = getUpdateCheckConfig();
