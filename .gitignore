@@ -33,9 +33,6 @@ backup/
 .migrate-backup-*/
 .rollback-backup-*/
 
-# Scratch profiles from local recon scripts
-recon/edge-profile/
-recon/test-profile/
 
 # Credential files written by the in-game automation
 game-account.txt
