@@ -21,11 +21,9 @@ import { Logger, verboseLogging, color, startRunLog, closeRunLog, getLogFilePath
 const logger = new Logger("Launcher");
 
 async function main() {
-  // 先打启动横幅（ASCII art），刻意不走 logger：不然每行都会带时间戳前缀
+
   printBanner();
 
-  // 一开始就打开本次运行的日志文件：logs/logs-<时间戳>.txt
-  // 放在读配置之前，这样连「配置加载失败」这类早期日志也能留下来
   const logFile = startRunLog();
 
   const config = getConfig();
@@ -54,7 +52,6 @@ async function main() {
   for (const line of changelogLines(2)) logger.info(line);
   logger.info("Run /changelog to see the full history.");
 
-  // 版本：当日启动次数 +1（跨天清零），并把 editDate 打出来
   const updateConfig = getUpdateCheckConfig();
   const versionState = bumpDailyCount();
   logger.kv("Version", `${versionState.editDate} (${versionState.count} launch(es) today)`);
@@ -72,7 +69,6 @@ async function main() {
   const automation = automationConfig.enabled ? new GameAutomation(automationConfig) : null;
   const proxy = new ReverseProxy(config, automation);
 
-  // 配置热更新：/set 改完立刻生效（不用重启）
   let announceTimer: NodeJS.Timeout | null = null;
   const restartAnnounce = (): void => {
     if (announceTimer) clearInterval(announceTimer);
@@ -87,31 +83,24 @@ async function main() {
   });
   const consoleCommands = new ConsoleCommands(proxy, { echo: consoleConfig.echo });
 
-
-  // 配置读完后启用底部输入框（在此之前都是普通逐行输出）
   consoleUi.enable(consoleConfig.echo);
 
-  // 先把控制台挂起来：即使后面代理端口被占用启动失败，/help 等命令依然可用。
   consoleCommands.start();
   if (consoleConfig.autoHelp) consoleCommands.printHelp();
 
-  // 公告刷屏：控制台 + 游戏内聊天栏（间隔与开关见 config.json -> announce）
   announceTimer = startAnnounce(proxy, getAnnounceConfig());
 
-  // 更新提示：和 GitHub 上的 version.json 比 editDate（取不到就静默跳过）
   void checkForUpdates(updateConfig, (result) => {
     if (!updateConfig.notifyInGame) return;
     try {
       proxy.broadcastChat(formatNotice(result));
     } catch {
-      /* 没有在线玩家，忽略 */
+
     }
   }).then((result) => {
     if (result.status === "up-to-date") logger.info(result.message);
     else if (result.status === "unknown") logger.debug(result.message);
   });
-
-
 
   proxy.on("started", () => {
     logger.info("✓ Reverse proxy is now running!");
@@ -155,12 +144,11 @@ async function main() {
     logger.error(`Unhandled rejection: ${reason}`);
   });
 
-  // 退出时把日志文件关掉（closeRunLog 会写一行收尾标记）
   const closeLog = () => {
     try {
       closeRunLog();
     } catch {
-      /* ignore */
+
     }
   };
   process.once("exit", closeLog);
@@ -191,7 +179,7 @@ async function main() {
     logger.error("Console commands still work (/help, /config, /backup, ...).");
     logger.error("After fixing the problem, restart this program so the proxy actually listens.");
     logger.error("=".repeat(60));
-    // 不再 process.exit：否则控制台会立刻消失，用户连报错都来不及看。
+
     return;
   }
 }
@@ -202,7 +190,7 @@ main().catch((err) => {
     writeLogLine(`Fatal error: ${err?.stack ?? err}`);
     closeRunLog();
   } catch {
-    /* ignore */
+
   }
   process.exit(1);
 });

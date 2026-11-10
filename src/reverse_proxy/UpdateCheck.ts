@@ -1,14 +1,3 @@
-/**
- * 更新提示（只提示，不自动更新）。
- *
- * 本地 `version.json` 记录两样东西：
- *   editDate  —— 本版本的编辑日期（用来和 GitHub 上比）
- *   count     —— 当日启动次数（跨天自动清零）
- *
- * 启动时若开启了 updateCheck，就去 GitHub 取同名文件，
- * 两个 editDate 不一致就提示更新。取不到（断网 / 仓库没有该文件）就静默跳过，
- * 只把状态记成 "unknown"，不影响正常使用。全程只读远端，不会下载或替换任何文件。
- */
 import fs from "node:fs";
 import path from "node:path";
 import { Logger, color } from "../logger.js";
@@ -18,25 +7,25 @@ const logger = new Logger("Update");
 export const VERSION_FILE = "version.json";
 
 export interface VersionState {
-  /** 本版本的编辑日期，格式 YYYY-MM-DD */
+
   editDate: string;
-  /** 当日启动次数 */
+
   count: number;
-  /** count 对应的日期；跨天时 count 归零 */
+
   countDate: string;
-  /** 最近一次检查时间（ISO） */
+
   lastCheck?: string;
-  /** 最近一次取到的远端编辑日期 */
+
   remoteEditDate?: string;
 }
 
 export interface UpdateCheckConfig {
   enabled: boolean;
-  /** GitHub 仓库：owner/repo */
+
   repo: string;
-  /** 单次请求超时（毫秒） */
+
   timeoutMs: number;
-  /** 发现新版本时是否也推到游戏内聊天栏 */
+
   notifyInGame: boolean;
 }
 
@@ -53,7 +42,7 @@ export interface UpdateResult {
   status: UpdateStatus;
   localDate: string;
   remoteDate?: string;
-  /** 当日启动次数 */
+
   count: number;
   message: string;
 }
@@ -93,7 +82,6 @@ export function saveVersionState(state: VersionState): void {
   }
 }
 
-/** 当日启动次数 +1（跨天清零），并写回文件 */
 export function bumpDailyCount(): VersionState {
   const state = loadVersionState();
   const now = today();
@@ -106,7 +94,6 @@ export function bumpDailyCount(): VersionState {
   return state;
 }
 
-/** 从 GitHub 取远端的 version.json；失败返回 null（静默跳过） */
 async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, config.timeoutMs));
@@ -116,7 +103,6 @@ async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState
     return null;
   }
 
-  // 先走 API（部分网络下 raw.githubusercontent 不通），再退回 raw
   const endpoints = [
     `https://api.github.com/repos/${config.repo}/contents/${VERSION_FILE}`,
     `https://raw.githubusercontent.com/${config.repo}/master/${VERSION_FILE}`,
@@ -135,7 +121,7 @@ async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState
         });
         if (!res.ok) continue;
         const text = await res.text();
-        // API 返回 { content: base64 }，raw 直接是文件内容
+
         let body = text;
         try {
           const json = JSON.parse(text);
@@ -143,7 +129,7 @@ async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState
             body = Buffer.from(json.content, "base64").toString("utf8");
           }
         } catch {
-          /* 不是 JSON，说明拿到的就是文件内容 */
+
         }
         const parsed = JSON.parse(body) as Partial<VersionState>;
         if (typeof parsed.editDate !== "string") continue;
@@ -154,7 +140,7 @@ async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState
         };
       } catch (err) {
         if ((err as Error).name === "AbortError") break;
-        /* 换下一个端点 */
+
       }
     }
     return null;
@@ -163,10 +149,6 @@ async function fetchRemoteState(config: UpdateCheckConfig): Promise<VersionState
   }
 }
 
-/**
- * 只比对编辑日期，不下载任何东西。
- * @param onOutdated 发现日期不一致时的回调（用于推到游戏内聊天栏）
- */
 export async function checkForUpdates(
   config: UpdateCheckConfig,
   onOutdated?: (result: UpdateResult) => void
@@ -226,7 +208,6 @@ export async function checkForUpdates(
   return result;
 }
 
-/** 统一格式，给游戏内聊天栏用 */
 export function formatNotice(result: UpdateResult): string {
   if (result.status === "outdated") {
     return `§e[更新] §f发现新版本 §7(本地 ${result.localDate} → 远端 ${result.remoteDate})§f，请到 §bgithub.com/HertaTeam/IMCProxy-Free §f更新`;

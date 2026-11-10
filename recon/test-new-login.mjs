@@ -1,4 +1,3 @@
-// imc 新登录方式（聊天栏直接发密码）的回归测试
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -73,19 +72,15 @@ async function buildAutomation() {
 const automation = await buildAutomation();
 const logLine = '| 直接在聊天框发送网页账号的密码即可登录';
 
-// 1) 新登录方式
 automation.handleServerMessage('Player', logLine, hooks);
 const first = sent.slice();
 
-// 2) 第二种排版（同一句被打散）
 sent.length = 0;
 automation.handleServerMessage('Player', '也可打开网页，在弹出的提示里点选 西瓜 即可一键登录', hooks);
 const second = sent.slice();
 
-// 3) 登录成功不应抛错
 automation.handleServerMessage('Player', '| 登录成功', hooks);
 
-// 4) 老提示仍应走 /login
 sent.length = 0;
 automation.handleServerMessage('Player', '请使用/login 登录', hooks);
 const third = sent.slice();
@@ -98,7 +93,7 @@ console.log('  散装排版发送内容:', JSON.stringify(second));
 console.log('  老提示发送内容 :', JSON.stringify(third));
 
 const pass1 = first.length === 1 && first[0] === expectedPassword;
-const pass2 = second.length === 0; // 这句只是提示语，不应重复发密码
+const pass2 = second.length === 0;
 const pass3 = third.length === 1 && third[0] === '/login gamepass123';
 
 console.log(`  新方式发送密码: ${pass1 ? 'PASS' : 'FAIL'}`);

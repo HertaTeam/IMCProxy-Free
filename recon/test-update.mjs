@@ -1,4 +1,3 @@
-// 更新提示（只比对编辑日期，不自动更新）
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -13,16 +12,13 @@ const cfg = { enabled: true, repo: 'HertaTeam/IMCProxy-Free', timeoutMs: 3000, n
 const reset = (state) => fs.writeFileSync(FILE, JSON.stringify(state, null, 2) + '\n', 'utf8');
 const today = new Date().toISOString().slice(0, 10);
 
-// ---- A. 当日次数 +1 ----
 reset({ editDate: '2026-10-19', count: 2, countDate: today });
 const a1 = bumpDailyCount();
 const a2 = bumpDailyCount();
 
-// ---- B. 跨天清零 ----
 reset({ editDate: '2026-10-19', count: 7, countDate: '2000-01-01' });
 const b = bumpDailyCount();
 
-// ---- C. 远端日期不同 → 提示更新 ----
 reset({ editDate: '2026-10-19', count: 0, countDate: today });
 globalThis.fetch = async () => ({
   ok: true,
@@ -30,23 +26,19 @@ globalThis.fetch = async () => ({
 });
 const c = await checkForUpdates(cfg);
 
-// ---- D. 日期相同 → 已是最新 ----
 globalThis.fetch = async () => ({
   ok: true,
   text: async () => JSON.stringify({ editDate: '2026-10-19', count: 0, countDate: '2026-10-19' }),
 });
 const d = await checkForUpdates(cfg);
 
-// ---- E. 网络失败 → unknown ----
 globalThis.fetch = async () => {
   throw new Error('network down');
 };
 const e = await checkForUpdates(cfg);
 
-// ---- F. 关闭检查 ----
 const f = await checkForUpdates({ ...cfg, enabled: false });
 
-// ---- G. version.json 不应该再包含 version 字段 ----
 const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'));
 
 if (original !== null) fs.writeFileSync(FILE, original, 'utf8');

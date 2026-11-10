@@ -25,11 +25,8 @@ function jsonLog(type: JsonLogType, message: string): string {
   );
 }
 
-/* ------------------------------------------------------------ 行格式 */
-
 type LogLevel = JsonLogType;
 
-/** logger 名字那一列的宽度（所有名字里最长的 EaglerClient/ReverseProxy 是 12） */
 const NAME_WIDTH = 12;
 
 const LEVEL_TAG: Record<LogLevel, string> = {
@@ -48,21 +45,16 @@ const LEVEL_PAINT: Record<LogLevel, (s: string) => string> = {
   debug: (s) => color.gray(s),
 };
 
-/** HH:mm:ss（控制台上不用显示日期，文件名和日志头里已经有日期了） */
 function hhmmss(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/* ------------------------------------------------------ 日志文件输出 */
-
-/** ANSI 颜色码（写进文件前要剥掉，否则文本编辑器里全是乱码） */
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 
 let logFd: number | null = null;
 let logFilePath: string | null = null;
 
-/** 本次运行的日志文件路径（没启用文件日志时为 null） */
 export function getLogFilePath(): string | null {
   return logFilePath;
 }
@@ -76,7 +68,6 @@ function stamp(): string {
   );
 }
 
-/** 只保留最新的 keep 份 logs-*.txt */
 function pruneLogs(dir: string, keep: number): void {
   try {
     const files = fs
@@ -90,19 +81,14 @@ function pruneLogs(dir: string, keep: number): void {
       try {
         fs.rmSync(path.join(dir, file.name), { force: true });
       } catch {
-        /* ignore */
+
       }
     }
   } catch {
-    /* ignore */
+
   }
 }
 
-/**
- * 开始本次运行的日志文件：`<dir>/logs-<时间戳>.txt`。
- * 用同步写，进程被强杀也不会丢掉最后几行。
- * @returns 日志文件绝对路径；创建失败返回 null（不影响正常运行）
- */
 export function startRunLog(dirName = "logs", keep = 50): string | null {
   closeRunLog();
 
@@ -121,33 +107,30 @@ export function startRunLog(dirName = "logs", keep = 50): string | null {
 
   pruneLogs(dir, keep);
 
-  // 同步写一行头，确认文件真的可写
   writeLogLine(`=== log started at ${new Date().toISOString()} ===`);
   return file;
 }
 
-/** 写一行到日志文件（自动去掉颜色码） */
 export function writeLogLine(text: string): void {
   if (logFd === null) return;
   try {
     fs.writeSync(logFd, text.replace(ANSI_RE, "") + "\n");
   } catch {
-    /* 写盘失败不能影响主流程 */
+
   }
 }
 
-/** 关闭日志文件（会先写一行收尾标记） */
 export function closeRunLog(): void {
   if (logFd !== null) {
     try {
       writeLogLine(`=== log stopped at ${new Date().toISOString()} ===`);
     } catch {
-      /* ignore */
+
     }
     try {
       fs.closeSync(logFd);
     } catch {
-      /* ignore */
+
     }
     logFd = null;
   }
@@ -165,18 +148,12 @@ export class Logger {
     this.verbose = verbose;
   }
 
-  /** 同时写控制台与日志文件 */
   private emit(line: string, toStderr = false): void {
     if (toStderr) process.stderr.write(line + "\n");
     else process.stdout.write(line + "\n");
     writeLogLine(line);
   }
 
-  /**
-   * 统一的一行格式：
-   *   控制台  `HH:mm:ss  INFO   Config        message`
-   *   日志文件 `2026-10-17T09:57:06.087Z INFO   Config        message`
-   */
   private line(level: LogLevel, s: string, forFile: boolean): string {
     const now = new Date();
     const tag = LEVEL_TAG[level];
@@ -193,7 +170,7 @@ export class Logger {
   }
 
   private log(level: LogLevel, s: string, toStderr: boolean): void {
-    // 空消息就是单纯的空行，别留一串时间戳
+
     if (s === "") {
       process.stdout.write("\n");
       writeLogLine("");
@@ -233,7 +210,6 @@ export class Logger {
     this.log("debug", s, true);
   }
 
-  /** 分节标题：`── Configuration ─────────────────────────` */
   section(title: string): void {
     const width = Math.max(40, Math.min((process.stdout.columns ?? 72) - 1, 78));
     const head = `── ${title} `;
@@ -242,7 +218,6 @@ export class Logger {
     writeLogLine(`--- ${title} ${"-".repeat(Math.max(0, width - head.length))}`);
   }
 
-  /** 左标签右值，标签用灰色对齐 */
   kv(label: string, value: unknown): void {
     this.info(`  ${color.gray(label.padEnd(NAME_WIDTH + 6))} ${String(value)}`);
   }

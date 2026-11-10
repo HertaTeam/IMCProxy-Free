@@ -1,4 +1,3 @@
-// logs/ 文件夹：每次运行一个 logs-<时间戳>.txt
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const root = process.argv[2] || process.cwd();
-const rootAbs = path.resolve(root); // 先定成绝对路径：后面会 chdir
+const rootAbs = path.resolve(root);
 const entry = path.resolve(rootAbs, 'build/reverse_proxy/index.js');
 
 let pass = 0, fail = 0;
@@ -56,8 +55,7 @@ const lines = text1.split(/\r?\n/);
 console.log('    前 6 行:');
 lines.slice(0, 6).forEach((l) => console.log('      ' + l.slice(0, 100)));
 ok(/log started at/.test(text1), '有开始标记');
-// 注意：Windows 上 kill() 是强杀，exit 钩子不执行，所以集成测试这里不断言收尾标记。
-// 收尾标记由 closeRunLog() 负责，下面用单元测试单独验证。
+
 ok(/IMCProxy(-Free)?/.test(text1), '记录了启动分节标题');
 ok(/Config file/.test(text1), '记录了配置文件路径');
 ok(/Tab completes command names/.test(text1), '记录了 /help 的输出');
@@ -65,7 +63,7 @@ ok(!/\x1b\[/.test(text1), '日志文件里没有 ANSI 颜色码');
 ok(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+INFO\s/m.test(text1), '日志文件行首是完整时间戳 + 级别');
 
 console.log('\n--- 3. 每次运行一个独立文件 ---');
-await new Promise((r) => setTimeout(r, 1100)); // 让时间戳至少差 1 秒
+await new Promise((r) => setTimeout(r, 1100));
 out = await runIn(tmp, '');
 const second = listLogs();
 ok(second.length === 2, `第二次运行后共 2 个文件（实际 ${second.length}）`);
@@ -94,7 +92,7 @@ console.log('\n--- 6. closeRunLog 写收尾标记（单元级）---');
 {
   const unitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'imcp-logunit-'));
   const prevCwd = process.cwd();
-  process.chdir(unitDir); // startRunLog 用的是 cwd
+  process.chdir(unitDir);
   try {
     const loggerMod = await import(pathToFileURL(path.resolve(rootAbs, 'build/logger.js')).href);
     const file = loggerMod.startRunLog('logs', 50);

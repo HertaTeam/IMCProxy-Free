@@ -1,4 +1,3 @@
-// 名称保护长度修复 + 服务器名伪装 的回归测试
 import mcp from 'minecraft-protocol';
 const { createSerializer, createDeserializer, states } = mcp;
 
@@ -8,8 +7,7 @@ const { ServerNameSpoofer, DEFAULT_SERVER_NAME_SPOOF } = await import('../build/
 const ser = createSerializer({ state: states.PLAY, isServer: true, version: '1.8.9', customPackets: null });
 const de = createDeserializer({ state: states.PLAY, isServer: false, version: '1.8.9', customPackets: null, noErrorLogging: true });
 
-// ---- A. 名称保护：超长名字必须被截断，不能产生超限字段
-const LONG_NAME = '我是gay我是gay我是gay我是gay'; // 24 字符
+const LONG_NAME = '我是gay我是gay我是gay我是gay';
 const np = new NameProtector(
   () => ({ enabled: true, name: LONG_NAME, playlist: true, chat: true, scoreboard: true }),
   () => LONG_NAME,
@@ -28,7 +26,6 @@ const rewritten = np.rewrite(playerInfo);
 const parsed = de.parsePacketBuffer(rewritten);
 const nameOut = parsed.data.params.data[0].name;
 
-// ---- B. 服务器名伪装：聊天 / Tab 里的 imc 要变成 heypixel
 const spoofer = new ServerNameSpoofer(() => DEFAULT_SERVER_NAME_SPOOF);
 const chat = ser.createPacketBuffer({
   name: 'chat',

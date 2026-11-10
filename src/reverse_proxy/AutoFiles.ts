@@ -2,12 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { Logger } from "../logger.js";
 
-/**
- * 极简 key=value 文本存储（带 # 注释）。
- *
- * 存的是账号密码，等同于凭据 —— 这些文件都在 .gitignore 里，不要提交。
- */
-
 export interface GameAccount {
   username: string;
   password: string;
@@ -61,8 +55,6 @@ export function fileExists(file: string): boolean {
 export function filePath(file: string): string {
   return resolve(file);
 }
-
-/* ---------------------------------------------------------- 游戏账号 */
 
 export function loadGameAccount(file: string): GameAccount | null {
   const kv = readKeyValue(file);

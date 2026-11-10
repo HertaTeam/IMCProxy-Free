@@ -1,4 +1,3 @@
-// 客户端 JSON 崩溃回归：任何被改写的聊天组件都必须仍是合法 JSON，且不被截断
 import mcp from 'minecraft-protocol';
 const { createSerializer, createDeserializer, states } = mcp;
 
@@ -8,7 +7,6 @@ const { ServerNameSpoofer, DEFAULT_SERVER_NAME_SPOOF } = await import('../build/
 const ser = createSerializer({ state: states.PLAY, isServer: true, version: '1.8.9', customPackets: null });
 const de = createDeserializer({ state: states.PLAY, isServer: false, version: '1.8.9', customPackets: null, noErrorLogging: true });
 
-// 故意用「超长 + 带引号 + 带反斜杠」的名字，最容易把 JSON 拼接写坏
 const NASTY = '我是gay"\\我是gay我是gay我是gay';
 const np = new NameProtector(
   () => ({ enabled: true, name: NASTY, playlist: true, chat: true, scoreboard: true }),
@@ -21,7 +19,6 @@ const uuid = '11111111-2222-3333-4444-555555555555';
 const cases = [];
 const push = (label, packet, pick) => cases.push({ label, packet, pick });
 
-// 1) player_info：name 是纯字符串（截到 16），displayName 是 JSON 组件（不能被截断）
 push(
   'player_info name + displayName',
   ser.createPacketBuffer({
@@ -43,7 +40,6 @@ push(
   (p) => JSON.stringify({ name: p.data.params.data[0].name, displayName: p.data.params.data[0].displayName })
 );
 
-// 2) chat：JSON 组件，必须合法且含完整名字
 push(
   'chat JSON',
   ser.createPacketBuffer({
@@ -53,7 +49,6 @@ push(
   (p) => p.data.params.message
 );
 
-// 3) 计分板目标显示文本（上限 32，JSON 不能截断）
 push(
   'scoreboard_objective displayText',
   ser.createPacketBuffer({
@@ -63,7 +58,6 @@ push(
   (p) => p.data.params.displayText
 );
 
-// 4) 队伍前后缀（上限 16，JSON 不能截断）
 push(
   'scoreboard_team prefix',
   ser.createPacketBuffer({

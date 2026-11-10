@@ -38,11 +38,10 @@ export interface ConsoleCommandTarget {
   getPlayerCount(): number;
   setPacketLogging(enabled: boolean): boolean;
   togglePacketLogging(): boolean;
-  /** 给上游服务器发一条聊天指令（/login 之类） */
+
   sendChatToServer(message: string): number;
 }
 
-/** 命令名 → 配置键前缀（注意 nameProtect / serverNameSpoof 是驼峰） */
 const SECTION_PREFIX: Record<string, string> = {
   proxy: "",
   random: "randomId.",
@@ -57,7 +56,6 @@ const SECTION_PREFIX: Record<string, string> = {
 };
 const ID_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
-/** 控制台可用命令（Tab 补全与 /help 都用它） */
 const CONSOLE_COMMANDS = [
   "changelog",
   "randomname", "randomid", "rid",
@@ -99,16 +97,6 @@ export class ConsoleCommands {
 
   private echoEnabled: boolean;
 
-  /**
-   * 接管 stdin。
-   *
-   * 不用 readline：它的回显行为在不同终端（conhost / Windows Terminal）
-   * 与启动方式（直接跑 / 经 npm start）下不一致，出现过「打字看不见」的问题。
-   *
-   * 现在由 ConsoleUi 负责底部输入框与回显，这里只负责逐字符解析。
-   * 输入框生效时进 raw 模式（逐字符到达 + 自己回显）；
-   * 否则保持 cooked 模式，让终端自己回显整行。
-   */
   start(): void {
     if (this.started) return;
     this.started = true;
@@ -139,7 +127,7 @@ export class ConsoleCommands {
         (stdin as NodeJS.ReadStream).setRawMode?.(false);
         consoleUi.disable();
       } catch {
-        /* ignore */
+
       }
     };
     process.once("exit", restore);
@@ -153,29 +141,27 @@ export class ConsoleCommands {
     try {
       (process.stdin as NodeJS.ReadStream).setRawMode?.(false);
     } catch {
-      /* ignore */
+
     }
     try {
       process.stdin.pause();
     } catch {
-      /* ignore */
+
     }
     this.started = false;
   }
 
-  /** 逐字符处理输入；显示交给 ConsoleUi */
   private feed(text: string): void {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
 
-      // 方向键 / Home / End 等会发 ESC 序列，整段丢弃
       if (ch === "\u001b") {
         i += 2;
         continue;
       }
 
       if (ch === "\r" || ch === "\n") {
-        // CRLF 只算一次回车
+
         if (ch === "\n" && this.lastWasCR) {
           this.lastWasCR = false;
           continue;
@@ -183,7 +169,7 @@ export class ConsoleCommands {
         this.lastWasCR = ch === "\r";
 
         const line = consoleUi.getBuffer();
-        consoleUi.commitInput(); // 把这一行留在历史里
+        consoleUi.commitInput();
         if (line.trim()) {
           try {
             this.handle(line);
@@ -197,31 +183,31 @@ export class ConsoleCommands {
       this.lastWasCR = false;
 
       if (ch === "\u0003") {
-        // raw 模式下 Ctrl+C 不会触发 SIGINT，手动触发
+
         consoleUi.commitInput();
         process.emit("SIGINT");
         return;
       }
 
       if (ch === "\u0015") {
-        // Ctrl+U：清空当前行
+
         consoleUi.clearInput();
         continue;
       }
 
       if (ch === "\t") {
-        // Tab 补全命令名
+
         this.completeCommand();
         continue;
       }
 
       if (ch === "\u007f" || ch === "\b") {
-        // 退格
+
         consoleUi.backspace();
         continue;
       }
 
-      if (ch < " ") continue; // 其它控制字符忽略
+      if (ch < " ") continue;
 
       consoleUi.appendChar(ch);
     }
@@ -303,7 +289,6 @@ export class ConsoleCommands {
     }
   }
 
-  /** /changelog [all|版本号] —— 打印更新日志 */
   private showChangelog(argument: string): void {
     const entries = changelogFor(argument);
     if (entries.length === 0) {
@@ -360,7 +345,6 @@ export class ConsoleCommands {
     this.logger.warn("Usage: /log [on|off]");
   }
 
-  /** 提示新 ID 什么时候生效 */
   private printApplied(): void {
     const online = this.target.getPlayerCount();
     if (online > 0) {
@@ -372,7 +356,6 @@ export class ConsoleCommands {
     }
   }
 
-  /** /backup [list|label] */
   private backupCommand(argument: string): void {
     const arg = argument.trim();
 
@@ -402,7 +385,6 @@ export class ConsoleCommands {
     this.logger.info("  (in .gitignore, will not be committed)");
   }
 
-  /** Tab 补全：只补命令名（第一个词） */
   private completeCommand(): void {
     const buffer = consoleUi.getBuffer();
     const body = buffer.startsWith("/") ? buffer.slice(1) : buffer;
@@ -426,7 +408,6 @@ export class ConsoleCommands {
       return;
     }
 
-    // 多个候选：先补到最长公共前缀，再把候选列出来
     let prefix = matches[0];
     for (const match of matches) {
       while (prefix && !match.startsWith(prefix)) prefix = prefix.slice(0, -1);
@@ -436,11 +417,6 @@ export class ConsoleCommands {
     this.logger.info(`Completions: ${matches.map((m) => "/" + m).join("  ")}`);
   }
 
-  /**
-   * 每个配置分区一个命令：/nameprotect [子项] [值]
-   * 不带参数 = 显示该分区当前值；带子项 = 读；带值 = 改（热键立即生效）。
-   */
-  /** 执行单个配置项命令：无参数查看，有参数先校验再写入 */
   private applySetting(spec: SettingSpec, argument: string): void {
     const current = getConfigValue(spec.key);
 
@@ -467,7 +443,6 @@ export class ConsoleCommands {
     this.logger.info("  config.json updated");
   }
 
-  /** /settings [section] —— 只读列出全部配置命令 */
   private settingsList(argument: string): void {
     const filter = argument.trim().toLowerCase();
     const groups = new Map<string, SettingSpec[]>();

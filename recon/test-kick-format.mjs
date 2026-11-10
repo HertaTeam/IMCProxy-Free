@@ -1,4 +1,3 @@
-// 被 kick 时的日志格式回归：用日志里真实出现过的 JSON 组件作为输入
 import { ReverseProxy } from '../build/reverse_proxy/ReverseProxy.js';
 import { MineProtocol } from '../build/proxy/Protocol.js';
 

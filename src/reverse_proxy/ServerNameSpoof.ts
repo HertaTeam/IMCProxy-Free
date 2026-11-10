@@ -4,20 +4,6 @@ import { profileFor, type ProtocolProfile } from "./ProtocolProfile.js";
 
 const { createDeserializer, createSerializer, states } = mcp;
 
-/**
- * 服务器名伪装：把服务端发给客户端的文字里出现的指定词（默认 "imc"）
- * 替换成自定义词（默认 "heypixel"）。
- *
- * 处理位置（服务端 → 客户端方向）：
- *   - 聊天栏        chat (0x02)
- *   - Tab 头部/尾部 player_list_header_footer (0x47)
- *   - 计分板        scoreboard_objective / scoreboard_score / scoreboard_team (0x3B/0x3C/0x3E)
- *   - 标题          title (0x45)
- *   - 服务器品牌    custom_payload "MC|Brand" (0x3F)
- *
- * 只改本地显示，发给服务器的一个字节都不动。
- */
-
 export interface ServerNameMapping {
   from: string;
   to: string;
@@ -25,9 +11,9 @@ export interface ServerNameMapping {
 
 export interface ServerNameSpoofOptions {
   enabled: boolean;
-  /** 替换规则，按顺序执行 */
+
   mappings: ServerNameMapping[];
-  /** 是否忽略大小写 */
+
   caseInsensitive: boolean;
   targets: {
     chat: boolean;
@@ -45,10 +31,8 @@ export const DEFAULT_SERVER_NAME_SPOOF: ServerNameSpoofOptions = {
   targets: { chat: true, tab: true, scoreboard: true, title: true, brand: true },
 };
 
-/** 允许在 JSON 聊天组件里被替换的字段名 */
 const TEXT_KEYS = new Set(["text", "displayName", "prefix", "suffix", "itemName", "header", "footer"]);
 
-/** 各字段的协议上限（字符）；超了就放弃该字段，避免客户端 JSON/长度错误 */
 const FIELD_LIMIT = {
   chat: 32767,
   title: 32767,
@@ -58,7 +42,6 @@ const FIELD_LIMIT = {
   teamPrefix: 16,
   teamSuffix: 16,
 } as const;
-
 
 export class ServerNameSpoofer {
   private logger = new Logger("ServerName");
@@ -106,14 +89,13 @@ export class ServerNameSpoofer {
     return options.mappings.some((m) => m.from && m.to && m.from !== m.to);
   }
 
-  /** 纯文本替换（大小写可选） */
   replaceText(text: string): string {
     const options = this.resolveOptions();
     let out = text;
     for (const mapping of options.mappings) {
       if (!mapping.from || !mapping.to || mapping.from === mapping.to) continue;
       if (options.caseInsensitive) {
-        // 用拆分/拼接避免正则元字符问题
+
         const pattern = mapping.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         out = out.replace(new RegExp(pattern, "gi"), mapping.to);
       } else {
@@ -123,7 +105,6 @@ export class ServerNameSpoofer {
     return out;
   }
 
-  /** 递归替换聊天组件 JSON 里的文本字段；始终返回字符串 */
   private replaceComponent(json: unknown): string {
     if (typeof json !== "string") return typeof json === "undefined" ? "" : String(json);
     const trimmed = json.trim();
@@ -153,7 +134,6 @@ export class ServerNameSpoofer {
     return out;
   }
 
-  /** 服务端 → 客户端封包入口；不需要改写时原样返回 */
   rewrite(data: Buffer): Buffer {
     if (!this.isEnabled()) return data;
 
@@ -229,7 +209,7 @@ export class ServerNameSpoofer {
         return changed;
       }
       case "title": {
-        // action 0 = title, 1 = subtitle；其余是时间/清除，不含文本
+
         if (params.action !== 0 && params.action !== 1) return false;
         if (typeof params.text !== "string") return false;
         const after = this.replaceComponent(params.text);
@@ -266,7 +246,7 @@ export class ServerNameSpoofer {
       case "scoreboard_team":
       case "teams": {
         let changed = false;
-        // 1.8 里队伍显示名是 name（JSON 组件），team 才是内部 ID
+
         const limits: Record<string, number> = {
           name: FIELD_LIMIT.teamDisplay,
           displayName: FIELD_LIMIT.teamDisplay,
@@ -291,7 +271,7 @@ export class ServerNameSpoofer {
         const after = this.replaceText(text);
         if (after === text) return false;
         const encoded = Buffer.from(after, "utf8");
-        // 1.8 的 MC|Brand 是 VarInt 长度 + 字符串，这里保持原来的长度前缀形式
+
         params.data = Buffer.concat([Buffer.from([encoded.length]), encoded]);
         return true;
       }

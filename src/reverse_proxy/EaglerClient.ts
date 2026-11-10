@@ -12,14 +12,11 @@ export interface EaglerClientOptions {
   username: string;
   skinType?: ReverseEnums.SkinType;
   skinData?: Buffer | number;
-  /**
-   * WebSocket 握手时带的 Origin 头。
-   * 部分服务器（EaglercraftXServer）会检查它，只放行官方网页客户端，否则踢人。
-   */
+
   origin?: string;
-  /** WebSocket 握手时带的 User-Agent */
+
   userAgent?: string;
-  /** 原版协议号（1.8.9 = 47，1.12.2 = 340） */
+
   vanillaProtocol?: number;
 }
 
@@ -82,7 +79,6 @@ export class EaglerClient extends EventEmitter {
       this.state = ReverseEnums.ConnectionState.HANDSHAKING;
       this.logger.info(`Connecting to ${this.wsUrl}...`);
 
-      // 握手头：服务器可能会校验 Origin / User-Agent（不带就被当成"非法客户端"踢掉）
       const headers: Record<string, string> = {};
       if (this.origin) headers.Origin = this.origin;
       if (this.userAgent) headers["User-Agent"] = this.userAgent;

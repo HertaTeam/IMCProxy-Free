@@ -26,7 +26,6 @@ const { createSerializer } = mcp;
 
 export type { RandomIdMode };
 
-/** 聊天组件里的 color 名称 → § 码 */
 const MC_COLOR_CODES: Record<string, string> = {
   black: "0",
   dark_blue: "1",
@@ -46,37 +45,32 @@ const MC_COLOR_CODES: Record<string, string> = {
   white: "f",
 };
 
-/** MC 1.8 玩家名规则：3-16 位字母 / 数字 / 下划线 */
 const MC_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
 export interface ReverseProxyConfig {
   tcpHost: string;
   tcpPort: number;
-  /** 1.12.2 专用端口 */
+
   tcpPort1122?: number;
-  /** 是否开启 1.12.2 监听 */
+
   enable1122?: boolean;
-  /** imc-overlay 配置 */
+
   overlay?: OverlayOptions;
   eaglerServer: string;
-  /**
-   * 连上游时带的 Origin 头。
-   * EaglercraftXServer 会检查它：不带就被当成"非法客户端"踢掉
-   * （提示「请使用正确的Eaglercraft客户端连接本服务器」）。
-   */
+
   eaglerOrigin?: string;
-  /** 上游校验用浏览器 User-Agent */
+
   eaglerUserAgent?: string;
   maxPlayers: number;
   defaultSkinId: number;
   debug: boolean;
   randomIdMode?: RandomIdMode;
   randomIdLength?: number;
-  /** nameprotect：只改客户端显示的封包 */
+
   nameProtect?: NameProtectConfig;
-  /** 服务器名伪装：只改客户端显示的封包 */
+
   serverNameSpoof?: ServerNameSpoofOptions;
-  /** 参考型反作弊（只告警，不踢人） */
+
 }
 
 export interface ConnectedPlayer {
@@ -85,7 +79,7 @@ export interface ConnectedPlayer {
   uuid: string;
   eaglerClient: EaglerClient;
   mcClient: any;
-  /** 该连接使用的协议档案 */
+
   profile: ProtocolProfile;
 }
 
@@ -128,10 +122,6 @@ export class ReverseProxy extends EventEmitter {
     this.logger = new Logger("ReverseProxy");
   }
 
-  /**
-   * 配置热更新：/set 改完立刻生效，不需要重启。
-   * 只处理改包相关的项，其余（端口、上游、maxPlayers）重启后生效。
-   */
   applyRuntimeConfig(): void {
     this.nameProtectOptions = getNameProtectConfig();
     this.serverNameOptions = getServerNameSpoofConfig();
@@ -200,7 +190,6 @@ export class ReverseProxy extends EventEmitter {
     this.emit("started");
   }
 
-  /** 按版本取（并缓存）Tab overlay */
   private overlayFor(profile: ProtocolProfile): ImcOverlay {
     let overlay = this.overlays.get(profile.version);
     if (!overlay) {
@@ -210,7 +199,6 @@ export class ReverseProxy extends EventEmitter {
     return overlay;
   }
 
-  /** 按版本取（并缓存）服务器名伪装器 */
   private spooferFor(profile: ProtocolProfile): ServerNameSpoofer {
     let spoofer = this.serverNameSpoofers.get(profile.version);
     if (!spoofer) {
@@ -248,7 +236,6 @@ export class ReverseProxy extends EventEmitter {
     }
   }
 
-  /** 决定服务端看到的 ID：随机 ID 模式下换一个新的，否则用客户端自己的 */
   private resolveUpstreamUsername(realUsername: string): string {
     const taken = this.collectUpstreamUsernames();
 
@@ -325,10 +312,6 @@ export class ReverseProxy extends EventEmitter {
     return this.setPacketLogging(!this.packetLogging);
   }
 
-  /**
-   * 给所有在线玩家的上游服务器发一条聊天指令（/login 之类）。
-   * @returns 成功发出去的会话数
-   */
   sendChatToServer(message: string): number {
     let sent = 0;
     for (const hooks of this.playerHooks.values()) {
@@ -336,16 +319,12 @@ export class ReverseProxy extends EventEmitter {
         hooks.sendToServer(message);
         sent++;
       } catch {
-        /* 单个会话失败不影响其他 */
+
       }
     }
     return sent;
   }
 
-  /**
-   * 给所有在线玩家的聊天栏发一条系统消息（公告刷屏用）。
-   * 返回成功送达到几个客户端。
-   */
   broadcastChat(text: string): number {
     let sent = 0;
     for (const hooks of this.playerHooks.values()) {
@@ -353,13 +332,12 @@ export class ReverseProxy extends EventEmitter {
         hooks.sendToClient(text);
         sent++;
       } catch {
-        /* 单个玩家发送失败不影响其他人 */
+
       }
     }
     return sent;
   }
 
-  /** 客户端上要显示成什么名字（nameprotect）；空串表示不改名 */
   private resolveDisplayName(): string {
     const np = this.nameProtectOptions;
     if (np.enabled && np.name) return np.name;
@@ -373,7 +351,7 @@ export class ReverseProxy extends EventEmitter {
       try {
         formatted = this.chatToFormatted(JSON.parse(raw));
       } catch {
-        /* 不是 JSON，就用原始字符串 */
+
       }
       return {
         plain: stripMcFormat(formatted).replace(/[ \t]+/g, " ").trim(),
@@ -384,7 +362,6 @@ export class ReverseProxy extends EventEmitter {
     }
   }
 
-  /** 把聊天组件还原成带 § 格式码的字符串（颜色既可能来自 § 码，也可能来自 color 字段） */
   private chatToFormatted(component: any): string {
     if (component == null) return "";
     if (typeof component === "string") return component;
@@ -563,7 +540,6 @@ export class ReverseProxy extends EventEmitter {
       customPackets: null,
     });
 
-    // 反向（服务端 → 客户端）序列化器，用于把提示直接显示在玩家聊天栏
     const serverSerializer = createSerializer({
       state: states.PLAY,
       isServer: true,
@@ -571,7 +547,6 @@ export class ReverseProxy extends EventEmitter {
       customPackets: null,
     });
 
-    // nameprotect：把自己在客户端上的显示名换掉（只改服务端→客户端方向的封包）
     const overlay = this.overlayFor(profile);
     overlay.setSelf(player.upstreamUsername);
 
@@ -626,7 +601,7 @@ export class ReverseProxy extends EventEmitter {
 
       if (meta.name === "chat" && typeof packet.message === "string") {
         this.logger.info(`[${player.username}] Chat: ${color.green(packet.message)}`);
-        // 游戏内自动化命令在这里被拦下，不再转发给服务器
+
         if (this.automation?.handleClientMessage(player.username, packet.message, hooks)) {
           return;
         }
@@ -653,11 +628,10 @@ export class ReverseProxy extends EventEmitter {
     eaglerClient.on("packet", (data: Buffer) => {
       const packetId = data[0];
 
-
       if (packetId === profile.ids.chat) {
         const { plain, colored } = this.parseChatPacket(data);
         if (plain) {
-          // 把服务端的 § 颜色映射到控制台；多行消息拆成多行日志
+
           for (const line of colored.split("\n")) {
             const shown = line.trimEnd();
             if (shown) this.logger.info(`[${player.username}] Server chat: ${mcToAnsi(shown)}`);
@@ -677,11 +651,10 @@ export class ReverseProxy extends EventEmitter {
       }
 
       try {
-        // nameprotect 只在这里生效；发给服务端的封包完全不经过它
-        // 先做服务器名伪装，再做 nameprotect（两者都只改服务端→客户端方向）
+
         const overlay = this.overlayFor(profile);
         if (packetId === profile.ids.joinGame) overlay.noteWorldChange();
-        // overlay 在 nameprotect 之前：查询用服务端真实 ID，显示交给 nameprotect
+
         let out = this.spooferFor(profile).rewrite(data);
         out = overlay.rewriteTabPacket(out) ?? out;
         out = overlay.rewritePlayerInfo(out, [player.username, player.upstreamUsername]) ?? out;
@@ -737,11 +710,6 @@ export class ReverseProxy extends EventEmitter {
     });
   }
 
-  /**
-   * 解析踢出包（0x40）。
-   * 服务器给的 reason 是 JSON 聊天组件（可能嵌套 extra / color / bold，并带 \n），
-   * 这里还原成纯文本：颜色码去掉、空白收敛、保留换行，多行由调用方逐行打印。
-   */
   private parseKickPacket(data: Buffer): string {
     try {
       const raw = MineProtocol.readString(data.subarray(1)).value;
@@ -751,13 +719,11 @@ export class ReverseProxy extends EventEmitter {
     }
   }
 
-  /** JSON 聊天组件 → 纯文本；不是 JSON 就按普通字符串处理 */
   private chatComponentToPlain(raw: unknown): string {
     const text = typeof raw === "string" ? raw : "";
     const trimmed = text.trim();
     if (!trimmed) return "";
 
-    // 不是 JSON 组件：去掉 § 码后按行整理
     if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
       return this.normalizePlainLines(text);
     }
@@ -771,7 +737,6 @@ export class ReverseProxy extends EventEmitter {
     }
   }
 
-  /** 去颜色码、去掉行内多余空格、丢空行，但保留换行结构 */
   private normalizePlainLines(text: string): string {
     return stripMcFormat(text)
       .split(/\r?\n/)

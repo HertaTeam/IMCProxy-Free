@@ -1,10 +1,3 @@
-/**
- * 版本更新日志。
- *
- * 启动时打印最近两个版本，完整历史用 /changelog 查看。
- * 每个版本只记录**该版本自己**的改动，便于对照。
- */
-
 export interface ChangelogEntry {
   version: string;
   date: string;
@@ -71,7 +64,6 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-/** 生成用于控制台打印的行 */
 export function changelogLines(limit = 3): string[] {
   const lines: string[] = [];
   for (const entry of CHANGELOG.slice(0, Math.max(1, limit))) {
@@ -81,7 +73,6 @@ export function changelogLines(limit = 3): string[] {
   return lines;
 }
 
-/** 按关键字查找：all / 版本号 */
 export function changelogFor(keyword: string): ChangelogEntry[] {
   const value = keyword.trim().toLowerCase();
   if (!value) return CHANGELOG.slice(0, 3);

@@ -1,10 +1,8 @@
-// 公告刷屏：间隔应为 10 秒；enabled=false 时应完全不刷
 import { spawn } from 'node:child_process';
 import { startAnnounce } from '../build/reverse_proxy/Announce.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ---- A. 默认配置：10 秒一次 ----
 const proxy = spawn(process.execPath, ['build/reverse_proxy/index.js'], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, IMC_AUTO_LOGIN: 'off', IMC_BROWSER_LOGIN: 'off', IRC_AUTO_LOGIN: 'off', DEBUG: 'false' },
@@ -34,7 +32,6 @@ console.log('  间隔(秒):', gaps.join(' '));
 const intervalLine = clean.split(/\r?\n/).find((l) => l.includes('Announce spam every'));
 console.log('  启动提示:', intervalLine ? intervalLine.trim().slice(0, 90) : '(无)');
 
-// ---- B. 关闭刷屏 ----
 const calls = [];
 const stub = { broadcastChat: (t) => calls.push(t) };
 const timer = startAnnounce(stub, { enabled: false, intervalMs: 10000, console: false, inGameChat: true });

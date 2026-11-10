@@ -1,4 +1,3 @@
-// 配置命令回归：每个键独立命令 + 类型校验 + 非法值不写盘
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
@@ -62,7 +61,6 @@ check('/settings 只读列出', has(/── overlay/), JSON.stringify(show(/─�
 const after = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 check('非法值没有写入 config.json', after.tcpPort === before.tcpPort, `tcpPort ${before.tcpPort} -> ${after.tcpPort}`);
 
-// 还原测试中改动的值
 after.overlay = after.overlay ?? {};
 after.overlay.mode = before.overlay?.mode ?? 'auto';
 after.overlay.decorateTab = before.overlay?.decorateTab ?? true;

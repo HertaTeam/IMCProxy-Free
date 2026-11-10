@@ -1,43 +1,35 @@
-/**
- * 协议档案：同一套代理逻辑要同时服务 1.8.9 与 1.12.2 两种客户端。
- *
- * 两个版本共用同一套"按名字"的包处理（chat / player_info / scoreboard …），
- * 但**数字包 ID 不同**，而且 1.12.2 里队伍包叫 `teams`。
- * 这里把差异集中成一张表，其它模块只查表、不写死数字。
- */
-
 export type McVersion = "1.8.9" | "1.12.2";
 
 export interface PacketIds {
-  /** 服务端 → 客户端 聊天 */
+
   chat: number;
-  /** 服务端 → 客户端 踢出/断开（kick_disconnect） */
+
   kick: number;
-  /** player_info */
+
   playerInfo: number;
-  /** scoreboard_objective */
+
   objective: number;
-  /** scoreboard_score */
+
   score: number;
-  /** scoreboard_team（1.12.2 叫 teams） */
+
   team: number;
-  /** title */
+
   title: number;
-  /** playerlist_header（Tab 页眉/页脚） */
+
   tabHeader: number;
-  /** 进入世界（login / join_game） */
+
   joinGame: number;
-  /** 重生（切换维度） */
+
   respawn: number;
-  /** custom_payload（MC|Brand） */
+
   customPayload: number;
 }
 
 export interface ProtocolProfile {
   version: McVersion;
-  /** 显示用名字，Beta 版本带标记 */
+
   label: string;
-  /** 原版协议号（Eaglercraft 握手用） */
+
   protocol: number;
   beta: boolean;
   ids: PacketIds;
@@ -90,7 +82,6 @@ export function profileFor(version: McVersion): ProtocolProfile {
   return PROFILES[version];
 }
 
-/** 该版本下所有"可能含聊天组件/玩家名"的包 ID（用于快速预过滤） */
 export function rewriteRelevantIds(profile: ProtocolProfile): Set<number> {
   const { ids } = profile;
   return new Set([ids.chat, ids.playerInfo, ids.objective, ids.score, ids.team, ids.title, ids.tabHeader, ids.customPayload]);

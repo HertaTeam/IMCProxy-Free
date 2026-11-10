@@ -1,19 +1,3 @@
-/**
- * imc-overlay（内嵌版）
- *
- * 参考 https://github.com/lonivxy/imc-overlay 的数据思路与列式排版：
- *   对局名单 → 查 api.imc.re 公开战绩 → 排成一张对齐的表。
- *
- * 直接改写**客户端 Tab**，不额外弹窗：
- *   - playerlist_header / player_list_header_footer：表头 + 玩家行 + 汇总
- *
- * 只显示 IMC 真实有的数据：名字、终杀、F/D、胜场、W/L、拆床、BB/L、延迟、K/D。
- * 参考图里的 HP / S.Tags / Stars（等级）IMC 接口没有，一律不编造。
- *
- * 生命周期：
- *   - 聊天出现「正在连接 bw #4」→ 识别房间号，清缓存并立即重新查询
- *   - 收到 login（切换世界/房间）→ 关闭 overlay，清空本次数据
- */
 import mcp from "minecraft-protocol";
 import { Logger } from "../logger.js";
 import type { ProtocolProfile } from "./ProtocolProfile.js";
@@ -22,12 +6,12 @@ const { createDeserializer, createSerializer, states } = mcp;
 
 export interface OverlayOptions {
   enabled: boolean;
-  /** auto = 由日志判断；bedwars = 强制打开；off = 关闭 */
+
   mode: "auto" | "bedwars" | "off";
   apiBase: string;
   refreshSeconds: number;
   topRows: number;
-  /** 保留字段：是否改写玩家名（现在不加前缀，仅用于兼容旧配置） */
+
   decorateTab: boolean;
   timeoutMs: number;
 }
@@ -59,12 +43,11 @@ export interface OverlayStats {
   kills: number;
   ping: number;
   fetchedAt: number;
-  /** 数据看起来不正常（样本太少却数值爆表等） */
+
   anomaly: boolean;
   failed?: boolean;
 }
 
-/** 不带房间号的起床战争字样 */
 const BEDWARS_PATTERNS = [
   "队的床",
   "床将在",
@@ -77,7 +60,6 @@ const BEDWARS_PATTERNS = [
   "正在连接",
 ];
 
-/** 公开接口没有 rating，按 imc-overlay 的 Rating Pro 公式本地估算（0.10 ~ 3.00） */
 export function computeRatingPro(
   matches: number,
   wins: number,
@@ -98,7 +80,6 @@ export function computeRatingPro(
   return clamp(1 + 1.25 * C * P, 0.1, 3);
 }
 
-/** 数据异常：样本太少却数值爆表，或本身矛盾 */
 function looksAnomalous(matches: number, wins: number, fkdr: number, kd: number): boolean {
   if (!Number.isFinite(matches) || !Number.isFinite(fkdr) || !Number.isFinite(kd)) return true;
   if (matches < 0 || wins < 0) return true;
@@ -117,9 +98,9 @@ export class ImcOverlay {
   private pings = new Map<string, number>();
   private roster = new Set<string>();
   private detected = false;
-  /** 自己的服务端 ID（由 ReverseProxy 传入） */
+
   private selfName: string | null = null;
-  /** 当前 bw 房间号（识别到才有） */
+
   private room: string | null = null;
   private lastRefresh = 0;
   private inFlight = new Set<string>();
@@ -149,7 +130,6 @@ export class ImcOverlay {
     return this.getOptions();
   }
 
-  /** 由 ReverseProxy 告知：当前玩家在服务器上的名字（不受 nameprotect 影响） */
   setSelf(name: string | null): void {
     const trimmed = (name ?? "").trim();
     if (!trimmed) return;
@@ -178,7 +158,6 @@ export class ImcOverlay {
     return this.room;
   }
 
-  /** 聊天内容里识别起床战争 / bw 房间号 */
   noteServerChat(plain: string): void {
     if (!this.options.enabled || this.options.mode === "off") return;
 
@@ -190,7 +169,7 @@ export class ImcOverlay {
       this.detected = true;
       if (isNewRoom) {
         this.logger.info(`BedWars room detected: ${room} - querying stats`);
-        // 每次进入新房间都重新查
+
         this.stats.clear();
         this.lastRefresh = 0;
         void this.refresh(true);
@@ -206,7 +185,6 @@ export class ImcOverlay {
     void this.refresh(true);
   }
 
-  /** 切换世界/房间：关闭 overlay 并清空本局数据 */
   noteWorldChange(): void {
     if (!this.detected && this.stats.size === 0) return;
     this.detected = false;
@@ -217,7 +195,6 @@ export class ImcOverlay {
     this.logger.info("World changed - Tab overlay closed");
   }
 
-  /** 记下名单：每个新玩家进入时单独查一次 */
   noteRoster(names: string[]): void {
     for (const name of names) {
       if (!name || name.length > 16) continue;
@@ -227,7 +204,6 @@ export class ImcOverlay {
     }
   }
 
-  /** 单个玩家：没有缓存 / 缓存过期才查；失败 30s 内不重试 */
   private checkPlayer(name: string, force = false): void {
     if (!this.isActive()) return;
     if (this.inFlight.has(name)) return;
@@ -327,7 +303,6 @@ export class ImcOverlay {
       .sort((a, b) => b.fkdr - a.fkdr);
   }
 
-  /** 表头 + 玩家行（只保留 IMC 真实字段；异常行标红） */
   private buildTabText(): { header: string; footer: string } {
     const options = this.options;
     const rows = this.ranked().slice(0, Math.max(1, options.topRows));
@@ -399,7 +374,6 @@ export class ImcOverlay {
     return { header, footer: selfLine };
   }
 
-  /** 把服务端的 Tab 页眉/页脚换成战绩表；返回 null 表示不改 */
   rewriteTabPacket(data: Buffer): Buffer | null {
     if (!this.isActive()) return null;
     let parsed: any;
@@ -422,7 +396,6 @@ export class ImcOverlay {
     }
   }
 
-  /** 收集 player_info 里的名字与 ping；不再给名字加前缀 */
   rewritePlayerInfo(data: Buffer, playerNames: string[]): Buffer | null {
     if (!this.isActive()) return null;
     let parsed: any;
@@ -447,7 +420,6 @@ export class ImcOverlay {
     }
     if (seen.length > 0 || playerNames.length > 0) this.noteRoster([...seen, ...playerNames]);
 
-    // 名字不加前缀：只保留原版显示
     return null;
   }
 

@@ -7,46 +7,30 @@ import {
   type GameAccount,
 } from "./AutoFiles.js";
 
-/**
- * 游戏内自动化。
- *
- * 玩家在游戏聊天栏输入的命令会被代理拦截（不转发给服务器），由本模块代执行：
- *
- *   /autoreg [密码] [确认密码]   注册游戏账号，成功后把账号密码写入 TXT
- *   /autologin                  读取 TXT，自动 /login
- *   /autostatus                 查看当前自动化状态
- *
- * 消息策略（重要）：
- *   - **自动触发**的流程只写代理控制台，绝不往玩家聊天栏塞东西；
- *   - 只有玩家自己敲的命令才会有游戏内回复，且可用 inGameReplies 关掉。
- *
- * 客户端信息（真实 ID / 服务端看到的 ID / UUID）由代理自身提供，无需玩家输入。
- */
-
 export interface AutomationConfig {
   enabled: boolean;
   gameAccountFile: string;
-  /** /autoreg 不带参数时使用的默认密码；留空则必须手动输入 */
+
   defaultGamePassword: string;
-  /** 是否允许在玩家聊天栏回复（只影响玩家主动输入的命令） */
+
   inGameReplies: boolean;
   autoLoginOnJoin: boolean;
   autoRegisterOnJoin: boolean;
 }
 
 export interface PlayerIdentity {
-  /** 玩家客户端里的真实 ID */
+
   realName: string;
-  /** 服务端实际看到的 ID（随机 ID 模式下可能不同） */
+
   serverName: string;
   uuid: string;
 }
 
 export interface AutomationHooks {
   identity(): PlayerIdentity;
-  /** 以玩家身份向服务器发送一条聊天/命令 */
+
   sendToServer(message: string): void;
-  /** 在玩家聊天栏显示一行提示（仅在玩家主动输入命令时使用） */
+
   sendToClient(text: string): void;
 }
 
@@ -56,12 +40,10 @@ interface PendingAction {
   at: number;
 }
 
-/** 一次操作等待服务端回执的最长时间；超时后视为无效，避免永久阻断后续自动动作 */
 const PENDING_TTL_MS = 60_000;
 
 const COMMANDS = ["autoreg", "autologin", "autostatus", "autohelp"];
 
-/** 消息通道：player = 玩家聊天栏，console = 代理控制台 */
 type Channel = "player" | "console";
 
 export class GameAutomation {
@@ -77,12 +59,10 @@ export class GameAutomation {
     return this.options;
   }
 
-  /** 自动流程一律只写控制台 */
   private toConsole(text: string): void {
     this.logger.info(text.replace(/§./g, ""));
   }
 
-  /** 玩家主动命令的回复（只有显式设为 false 才静音） */
   private toPlayer(hooks: AutomationHooks, text: string): void {
     if (this.options.inGameReplies === false) return;
     hooks.sendToClient(text);
@@ -103,8 +83,6 @@ export class GameAutomation {
     return pending;
   }
 
-  /* ------------------------------------------------------ 玩家进服 */
-
   onPlayerJoin(player: string, hooks: AutomationHooks): void {
     if (!this.options.enabled) return;
 
@@ -119,9 +97,6 @@ export class GameAutomation {
     );
   }
 
-  /* ------------------------------------------------ 客户端聊天拦截 */
-
-  /** @returns true 表示这条消息属于自动化命令，已处理，不要转发给服务器 */
   handleClientMessage(player: string, message: string, hooks: AutomationHooks): boolean {
     if (!message.startsWith("/")) return false;
 
@@ -153,8 +128,6 @@ export class GameAutomation {
     }
     return true;
   }
-
-  /* -------------------------------------------------------- 各命令 */
 
   private handleRegister(player: string, parts: string[], hooks: AutomationHooks): void {
     let password = parts[0];
@@ -201,12 +174,9 @@ export class GameAutomation {
     hooks.sendToServer(`/login ${saved.password}`);
   }
 
-  /** 处理服务端发来的聊天文本（匹配前会再归一化一次） */
   handleServerMessage(player: string, text: string, hooks: AutomationHooks): void {
     if (!this.options.enabled) return;
 
-    // 归一化：去 § 码、去空白、去装饰竖线、转小写。
-    // 服务端随时可能调整排版与空格，这样才能稳定命中。
     const flat = normalizeForMatch(text);
 
     if (flat.includes("成功注册") || flat.includes("注册成功")) {
@@ -225,13 +195,11 @@ export class GameAutomation {
       return;
     }
 
-    // 3) 登录成功
     if (flat.includes("登录成功")) {
       if (this.getPending(player)?.kind === "login") this.pending.delete(player);
       return;
     }
 
-    // 4) 服务端提示需要注册 / 登录 / 绑定 → 按配置自动执行（只写控制台）
     if (flat.includes("请使用/reg")) {
       if (this.options.autoRegisterOnJoin && !this.getPending(player)) {
         const saved = loadGameAccount(this.options.gameAccountFile);
@@ -261,8 +229,6 @@ export class GameAutomation {
       return;
     }
 
-    // 新登录方式（imc 改版后）：聊天栏直接发送"网页账号的密码"即可登录。
-    // free 版没有 imc 账号池，就用保存的游戏账号密码作为网页密码。
     if (flat.includes("发送网页账号的密码") || flat.includes("网页账号的密码即可登录")) {
       if (!this.getPending(player)) {
         const saved = loadGameAccount(this.options.gameAccountFile);
@@ -278,14 +244,11 @@ export class GameAutomation {
       return;
     }
 
-    // 图形验证码（地图读字）——脚本无法识别，必须人工
     if (flat.includes("请解决验证码") || flat.includes("验证码错误")) {
       this.toConsole("!! Manual map captcha required - solve it in game chat");
       return;
     }
   }
-
-  /* -------------------------------------------------------- 状态 */
 
   private showStatus(player: string, hooks: AutomationHooks): void {
     const id = hooks.identity();

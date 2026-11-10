@@ -2,22 +2,6 @@ import { Chalk } from "chalk";
 
 const color = new Chalk({ level: 2 });
 
-/**
- * 控制台界面。
- *
- * 布局：
- *
- *   I ... 启动日志 ...
- *   ------------------------------------------------------------
- *   > 用户输入                                    ← 输入框固定在最底部
- *
- * 日志插入方式：清掉输入行 → 上移一行清掉分隔线 → 写日志 → 重画分隔线与输入框。
- * 结果就是日志在输入框上方不断向上滚动，输入框永远停在最底部，
- * 终端自带的回滚缓冲（上下翻页看历史）完全不受影响。
- *
- * 非 TTY（管道 / 重定向）时自动退化为逐行输出，不做任何光标控制。
- */
-
 const PROMPT = "> ";
 
 export class ConsoleUi {
@@ -42,10 +26,6 @@ export class ConsoleUi {
     else process.stdout.write(text);
   }
 
-  /**
-   * 启用底部输入框。
-   * @param inputBox false = 朴素模式（不接管输出，也不画输入框，交给终端回显）
-   */
   enable(inputBox = true): void {
     if (this.enabled) return;
     this.enabled = true;
@@ -76,8 +56,6 @@ export class ConsoleUi {
     return this.active;
   }
 
-  /* --------------------------------------------------------- 输入行 */
-
   getBuffer(): string {
     return this.buffer;
   }
@@ -98,13 +76,11 @@ export class ConsoleUi {
     this.renderInput();
   }
 
-  /** 整段替换输入内容（Tab 补全用） */
   setBuffer(text: string): void {
     this.buffer = text;
     this.renderInput();
   }
 
-  /** 回车：把这一行留在上方历史里，然后清空输入框 */
   commitInput(): void {
     const line = this.buffer;
     this.buffer = "";
@@ -116,23 +92,18 @@ export class ConsoleUi {
     this.raw("\x1b[2K\r" + color.green(PROMPT) + this.buffer);
   }
 
-  /* ----------------------------------------------------- 日志插入 */
-
-  /** 在输入框上方插入一行（保持输入框在底部） */
   printAbove(text: string): void {
     if (!this.active) {
       process.stdout.write(text + "\n");
       return;
     }
 
-    this.raw("\x1b[2K\r"); // 清掉输入行
-    this.raw("\x1b[1A\x1b[2K\r"); // 上移到分隔线并清掉
-    this.raw(text + "\n"); // 日志落在分隔线原来的位置
-    this.raw(this.separator() + "\n"); // 重画分隔线
-    this.raw(color.green(PROMPT) + this.buffer); // 重画输入框
+    this.raw("\x1b[2K\r");
+    this.raw("\x1b[1A\x1b[2K\r");
+    this.raw(text + "\n");
+    this.raw(this.separator() + "\n");
+    this.raw(color.green(PROMPT) + this.buffer);
   }
-
-  /* -------------------------------------------------------- 流接管 */
 
   private patch(stream: NodeJS.WriteStream): void {
     if (this.original.has(stream)) return;
@@ -151,7 +122,7 @@ export class ConsoleUi {
       const parts = text.split("\n");
       for (let i = 0; i < parts.length; i++) {
         const isLast = i === parts.length - 1;
-        if (isLast && parts[i] === "") break; // 以换行结尾，末尾空串不用输出
+        if (isLast && parts[i] === "") break;
         ui.printAbove(parts[i]);
       }
 

@@ -1,9 +1,3 @@
-/**
- * 启动横幅（ASCII art）。
- *
- * 图里全是反斜杠，直接写进双引号字符串会被当成转义符吃掉，
- * 所以源码里统一用 § 占位，运行时再替换成真正的反斜杠。
- */
 const BACKSLASH = String.fromCharCode(92);
 
 const RAW = [
@@ -18,10 +12,8 @@ const RAW = [
   "                                                             §/__/",
 ].join("\n");
 
-/** 可直接写到 stdout 的横幅文本（末尾不含换行） */
 export const BANNER = RAW.split("§").join(BACKSLASH);
 
-/** 打印横幅：直接写 stdout，不经过 logger（否则每行都会带上时间戳前缀） */
 export function printBanner(): void {
   process.stdout.write(BANNER + "\n");
 }

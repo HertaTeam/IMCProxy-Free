@@ -1,4 +1,3 @@
-// 回归：每进一个玩家查一次 + 底部自己数据 + nameprotect 兼容 + 异常标红
 import http from 'node:http';
 import mcp from 'minecraft-protocol';
 
@@ -61,12 +60,12 @@ const check = (label, ok, extra = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}${extra ? '  ' + extra : ''}`);
 };
 
-// 1) 识别房间 + 绑定自己
+
 overlay.noteServerChat('| 正在连接 bw #4');
 overlay.setSelf('Muer');
 check('识别 bw 房间号', overlay.isActive() && overlay.roomLabel() === 'bw #4', String(overlay.roomLabel()));
 
-// 2) 每进一个玩家单独查一次
+
 overlay.noteRoster(['Muer']);
 await new Promise((r) => setTimeout(r, 400));
 overlay.noteRoster(['Zeaqax']);
@@ -78,7 +77,7 @@ overlay.noteRoster(['Zeaqax']);
 await new Promise((r) => setTimeout(r, 400));
 check('重复进入不重复查询', hits.length === 3, JSON.stringify(hits));
 
-// 3) 表格内容
+
 const text = headerText();
 check('不含编造列且全英文', !text.includes('HP') && !text.includes('S.Tags') && !text.includes('★') && !/[\u4e00-\u9fa5]/.test(text), '');
 const cheatLine = text.split('\n').find((l) => l.includes('Cheater')) || '';
@@ -86,11 +85,11 @@ const muerLine = text.split('\n').find((l) => l.includes('Muer')) || '';
 check('异常数据标红', cheatLine.includes('§c') && cheatLine.includes('Cheater!'), JSON.stringify(cheatLine.slice(0, 50)));
 check('正常数据不标红', muerLine.includes('Muer') && !muerLine.includes('!'), JSON.stringify(muerLine.slice(0, 50)));
 
-// 4) 底部显示自己
+
 const foot = footerText();
 check('底部只显示自己（英文）', foot.indexOf('You') >= 0 && foot.indexOf('Muer') >= 0 && foot.indexOf('Kills:') < 0, JSON.stringify(foot));
 
-// 5) 切换世界关闭，再进入重新查询
+
 overlay.noteWorldChange();
 check('切换世界关闭 overlay', !overlay.isActive() && overlay.rewriteTabPacket(headerPacket()) === null);
 overlay.noteServerChat('| 正在连接 bw #8');

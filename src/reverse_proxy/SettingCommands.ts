@@ -1,31 +1,23 @@
-/**
- * 配置项命令表。
- *
- * 每个配置项只对应**一个**命令（命令名 = 配置键的小写形式，例如
- * `/tcpPort`、`/overlay.mode`、`/nameProtect.name`），
- * 值在写入前先按类型校验，类型不对直接拒绝，不会把 config.json 改坏。
- */
 import { getConfigValue, listConfigKeys } from "./config.js";
 
 export type SettingType = "boolean" | "number" | "integer" | "string" | "json";
 
 export interface SettingSpec {
-  /** 原始键名，例如 tcpPort / overlay.mode */
+
   key: string;
-  /** 命令名（小写），例如 tcpport / overlay.mode */
+
   command: string;
   type: SettingType;
   enum?: string[];
   min?: number;
   max?: number;
-  /** 字符串长度上限 */
+
   maxLength?: number;
-  /** 字符串必须匹配的格式说明 */
+
   pattern?: RegExp;
   hint?: string;
 }
 
-/** 针对具体键的额外约束（类型从当前值推断，这里补范围/枚举/格式） */
 const CONSTRAINTS: Record<string, Partial<SettingSpec>> = {
   tcpHost: { hint: "监听地址，通常为 0.0.0.0" },
   tcpPort: { min: 1, max: 65535, hint: "1.8.9 监听端口" },
@@ -52,7 +44,6 @@ const CONSTRAINTS: Record<string, Partial<SettingSpec>> = {
   },
 };
 
-/** 这些字符串允许为空（令牌、密码、路径） */
 const ALLOW_EMPTY = new Set([
   "imc.apiToken",
   "automation.defaultGamePassword",
@@ -66,7 +57,6 @@ function inferType(value: unknown): SettingType {
   return "string";
 }
 
-/** 生成全部配置项命令 */
 export function buildSettingSpecs(): SettingSpec[] {
   return listConfigKeys().map((key) => {
     const value = getConfigValue(key);
@@ -88,7 +78,6 @@ export interface ParseResult {
   message?: string;
 }
 
-/** 校验并转换输入值；失败时返回原因，调用方不得写配置 */
 export function parseSettingValue(spec: SettingSpec, input: string): ParseResult {
   const raw = input.trim();
 
@@ -155,7 +144,6 @@ export function parseSettingValue(spec: SettingSpec, input: string): ParseResult
   return { ok: true, value: raw };
 }
 
-/** 当前值 + 约束的可读描述 */
 export function describeSetting(spec: SettingSpec, value: unknown): string {
   const parts: string[] = [];
   parts.push(`type: ${spec.type}`);

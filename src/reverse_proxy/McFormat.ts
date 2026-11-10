@@ -1,12 +1,5 @@
 import { color } from "../logger.js";
 
-/**
- * Minecraft 聊天格式码（§x）→ 终端颜色。
- *
- * 用途：把服务端发来的彩色聊天原样"映射"到 IMCP 控制台，
- * 而不是把颜色码剥掉变成一行白字。
- */
-
 type Style = (s: string) => string;
 
 const COLORS: Record<string, Style> = {
@@ -33,10 +26,9 @@ const FORMATS: Record<string, Style> = {
   m: color.strikethrough,
   n: color.underline,
   o: color.italic,
-  k: (s) => s, // 乱码效果不做
+  k: (s) => s,
 };
 
-/** 把 § 颜色/格式码转成 ANSI 上色（颜色码会清掉之前的格式，与游戏内一致） */
 export function mcToAnsi(text: string): string {
   let styles: Style[] = [];
   let out = "";
@@ -62,15 +54,10 @@ export function mcToAnsi(text: string): string {
   return out;
 }
 
-/** 去掉所有 § 格式码，得到纯文本（用于正则匹配） */
 export function stripMcFormat(text: string): string {
   return text.replace(/§./g, "");
 }
 
-/**
- * 归一化：去格式码、去空白、去装饰竖线。
- * 用于「服务端提示」这类模糊匹配 —— 服务端随时可能调整空格与排版。
- */
 export function normalizeForMatch(text: string): string {
   return stripMcFormat(text).replace(/[\s|｜]+/g, "").toLowerCase();
 }

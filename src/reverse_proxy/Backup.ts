@@ -2,24 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Logger } from "../logger.js";
 
-/**
- * 备份文件夹。
- *
- * 所有备份都落在启动目录下的 `backup/` 里，**整个目录已在 .gitignore**，
- * 不会被提交，也不会被 git 清理掉。
- *
- * 目录结构：
- *   backup/
- *     config-20261015-205500.json           ← /config set 前的自动备份
- *     20261015-210000-manual/               ← /backup 打的手动快照
- *       config.json
- *       game-account.txt
- *       ...
- */
-
 export const BACKUP_DIR_NAME = "backup";
 
-/** 同一个文件最多留几份自动备份 */
 const MAX_PER_FILE = 20;
 
 const logger = new Logger("Backup");
@@ -63,7 +47,6 @@ export function timestamp(date = new Date()): string {
   );
 }
 
-/** 同名文件只保留最新的 MAX_PER_FILE 份 */
 function prune(dir: string, baseName: string, ext: string): void {
   try {
     const stale = fs
@@ -75,14 +58,10 @@ function prune(dir: string, baseName: string, ext: string): void {
 
     for (const item of stale) fs.rmSync(path.join(dir, item.name), { force: true });
   } catch {
-    /* 清理失败无所谓 */
+
   }
 }
 
-/**
- * 备份单个文件到 `backup/`（或 `backup/<subdir>/`）。
- * @returns 备份文件的绝对路径；源文件不存在时返回 null
- */
 export function backupFile(file: string, subdir = ""): string | null {
   const source = resolveFromCwd(file);
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) return null;
@@ -102,10 +81,6 @@ export function backupFile(file: string, subdir = ""): string | null {
   }
 }
 
-/**
- * 把一组文件打进同一个快照目录 `backup/<时间戳>[-标签]/`。
- * @returns 快照目录的绝对路径；没有任何文件时返回 null
- */
 export function backupFiles(files: string[], label = ""): string | null {
   const existing = files.map(resolveFromCwd).filter((f) => fs.existsSync(f) && fs.statSync(f).isFile());
   if (existing.length === 0) return null;
@@ -131,7 +106,6 @@ export interface BackupEntry {
   modified: Date;
 }
 
-/** 递归统计目录里的文件数与总字节数 */
 function measure(dir: string): { files: number; bytes: number } {
   let files = 0;
   let bytes = 0;
@@ -151,7 +125,7 @@ function measure(dir: string): { files: number; bytes: number } {
           files++;
           bytes += fs.statSync(full).size;
         } catch {
-          /* ignore */
+
         }
       }
     }
@@ -160,7 +134,6 @@ function measure(dir: string): { files: number; bytes: number } {
   return { files, bytes };
 }
 
-/** 列出已有的备份（目录与单文件） */
 export function listBackups(limit = 30): BackupEntry[] {
   const dir = backupDir();
   if (!fs.existsSync(dir)) return [];
@@ -177,14 +150,13 @@ export function listBackups(limit = 30): BackupEntry[] {
         entries.push({ name, isDirectory: false, files: 1, bytes: stat.size, modified: stat.mtime });
       }
     } catch {
-      /* ignore */
+
     }
   }
 
   return entries.sort((a, b) => b.modified.getTime() - a.modified.getTime()).slice(0, limit);
 }
 
-/** 需要备份的本地文件（配置 + 凭据） */
 export function defaultBackupTargets(): string[] {
   return ["config.json", "config.local.json", "game-account.txt"];
 }

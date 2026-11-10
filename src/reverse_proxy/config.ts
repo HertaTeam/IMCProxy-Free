@@ -7,68 +7,68 @@ import { backupFile } from "./Backup.js";
 
 const logger = new Logger("Config");
 
-/* -------------------------------------------------------------- 类型 */
+
 
 export interface ConsoleConfig {
-  /** 启动时自动打印命令列表（/help 的内容） */
+
   autoHelp: boolean;
-  /** 启动时自动打印一次账号状态 */
+
   autoStatus: boolean;
-  /** true = raw 模式 + 手动回显；false = 交给终端自己回显 */
+
   echo: boolean;
 }
 
-/** 公告刷屏（控制台 + 游戏内聊天栏） */
+
 export interface AnnounceConfig {
-  /** false = 完全不刷屏 */
+
   enabled: boolean;
-  /** 刷屏间隔（毫秒），最小 1000 */
+
   intervalMs: number;
-  /** 是否刷到控制台 */
+
   console: boolean;
-  /** 是否刷到游戏内聊天栏 */
+
   inGameChat: boolean;
 }
 
-/** 启动时和 GitHub 对比版本、提示更新 */
+
 export interface UpdateCheckConfig {
   enabled: boolean;
-  /** GitHub 仓库：owner/repo */
+
   repo: string;
-  /** 请求超时（毫秒） */
+
   timeoutMs: number;
-  /** 发现新版本时是否也推到游戏内聊天栏 */
+
   notifyInGame: boolean;
 }
 
 export interface RandomIdConfig {
-  /** false 等价于 mode: "off" */
+
   auto: boolean;
   mode: "off" | "startup" | "perConnection";
   length: number;
 }
 
-/** 游戏内自动化（/autoreg /autologin） */
+
 export interface AutomationConfig {
   enabled: boolean;
-  /** 游戏账号 TXT（由 /autoreg 写入） */
+
   gameAccountFile: string;
-  /** 多账号列表 TXT（/gameadd 写入，/gamestatus 查看，/logingame 使用） */
+
   gameAccountsFile: string;
-  /** /autoreg 不带参数时使用的默认密码；留空则必须手动输入 */
+
   defaultGamePassword: string;
-  /** 是否允许在玩家聊天栏回复（只影响玩家主动输入的命令；自动流程永远只写控制台） */
+
   inGameReplies: boolean;
-  /** 进服看到「请使用 /login」时自动登录 */
+
   autoLoginOnJoin: boolean;
-  /** 进服看到「请使用 /reg」时自动注册 */
+
   autoRegisterOnJoin: boolean;
 }
 
-/** nameprotect：只改客户端显示，绝不发给服务器 */
+
 export interface NameProtectConfig {
   enabled: boolean;
-  /** 客户端上显示的自定义名称 */
+
   name: string;
   playlist: boolean;
   chat: boolean;
@@ -78,14 +78,14 @@ export interface NameProtectConfig {
 export interface FileConfig {
   tcpHost?: string;
   tcpPort?: number;
-  /** 1.12.2 监听端口（Eaglercraft 1.12.2 客户端） */
+
   tcpPort1122?: number;
-  /** 是否开启 1.12.2 监听 */
+
   enable1122?: boolean;
   eaglerServer?: string;
-  /** 连上游时带的 Origin 头（部分服务器不带就踢人） */
+
   eaglerOrigin?: string;
-  /** 连上游时带的浏览器 User-Agent */
+
   eaglerUserAgent?: string;
   maxPlayers?: number;
   defaultSkinId?: number;
@@ -100,7 +100,7 @@ export interface FileConfig {
   overlay?: Partial<OverlayConfig>;
 }
 
-/* ------------------------------------------------------------ 默认值 */
+
 
 export const DEFAULT_FILE_CONFIG: Required<Pick<FileConfig, "tcpHost" | "tcpPort" | "tcpPort1122" | "enable1122" | "eaglerServer" | "eaglerOrigin" | "eaglerUserAgent" | "maxPlayers" | "defaultSkinId" | "debug">> = {
   tcpHost: "0.0.0.0",
@@ -141,10 +141,10 @@ const DEFAULT_NAME_PROTECT: NameProtectConfig = {
   scoreboard: true,
 };
 
-/** imc-overlay：把战绩表嵌进 Tab 列表 */
+
 export interface OverlayConfig {
   enabled: boolean;
-  /** auto = 由日志判断是否起床战争；bedwars = 强制；off = 关闭 */
+
   mode: "auto" | "bedwars" | "off";
   apiBase: string;
   refreshSeconds: number;
@@ -163,12 +163,12 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   timeoutMs: 6000,
 };
 
-/** 服务器名伪装（只改客户端显示） */
+
 export interface ServerNameSpoofConfig {
   enabled: boolean;
-  /** 替换规则，按顺序执行 */
+
   mappings: Array<{ from: string; to: string }>;
-  /** 是否忽略大小写 */
+
   caseInsensitive: boolean;
   targets: { chat: boolean; tab: boolean; scoreboard: boolean; title: boolean; brand: boolean };
 }
@@ -181,9 +181,9 @@ export const DEFAULT_SERVER_NAME_SPOOF: ServerNameSpoofConfig = {
 };
 
 
-/* -------------------------------------------------------- 文件读取 */
 
-/** 去掉 // 与 星号块注释，但不动字符串内部的内容（支持给 config.json 写注释） */
+
+
 export function stripJsonComments(input: string): string {
   let out = "";
   let inString = false;
@@ -243,9 +243,9 @@ export function getConfigFilePath(): string {
   return custom ? path.resolve(process.cwd(), custom) : path.resolve(process.cwd(), "config.json");
 }
 
-/* ------------------------------------------------- 配置文件自动生成 */
 
-/** 首次启动时写出来的默认配置（带注释）。这份文件在 .gitignore 里，不会提交。 */
+
+
 export const DEFAULT_CONFIG_TEMPLATE = `{
 
   "tcpHost": "0.0.0.0",
@@ -323,7 +323,7 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
 }
 `;
 
-/** 配置文件不存在时自动生成一份带注释的默认配置 */
+
 export function ensureConfigFile(): boolean {
   const file = getConfigFilePath();
   if (fs.existsSync(file)) return false;
@@ -338,13 +338,13 @@ export function ensureConfigFile(): boolean {
   }
 }
 
-/* --------------------------------------------------- 在线读写配置 */
+
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** 把 `值, // 注释` 拆开（注释判定要跳过字符串内部） */
+
 function splitValueAndComment(rest: string): { value: string; comment: string } {
   let inString = false;
   let escaped = false;
@@ -374,7 +374,7 @@ function formatConfigValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** 把 "true"/"false"/"123"/裸字符串 解析成合适的类型 */
+
 export function parseConfigValue(input: string): unknown {
   const text = input.trim();
   if (text === "true") return true;
@@ -389,16 +389,14 @@ export function parseConfigValue(input: string): unknown {
     try {
       return JSON.parse(text);
     } catch {
-      /* 解析失败就当普通字符串 */
+
     }
   }
   return text;
 }
 
-/**
- * 就地修改配置文件里的一项，**保留所有注释与排版**。
- * 支持 `键` 与 `段.键` 两种写法。
- */
+
+
 export function setConfigValue(keyPath: string, value: unknown): { ok: boolean; message: string } {
   ensureConfigFile();
   const file = getConfigFilePath();
@@ -415,7 +413,7 @@ export function setConfigValue(keyPath: string, value: unknown): { ok: boolean; 
   const key = dot === -1 ? keyPath : keyPath.slice(dot + 1);
   const keyRe = new RegExp(`^(\\s*)"${escapeRegExp(key)}"\\s*:\\s*(.*)$`);
 
-  // 找出要改的行号
+
   let targetLine = -1;
   if (!section) {
     for (let i = 0; i < lines.length; i++) {
@@ -437,7 +435,7 @@ export function setConfigValue(keyPath: string, value: unknown): { ok: boolean; 
     if (start === -1) return { ok: false, message: `Section "${section}" not found in ${file}` };
 
     for (let i = start + 1; i < lines.length; i++) {
-      if (/^\s*\}/.test(lines[i])) break; // 段结束
+      if (/^\s*\}/.test(lines[i])) break;
       if (keyRe.test(lines[i])) {
         targetLine = i;
         break;
@@ -460,7 +458,7 @@ export function setConfigValue(keyPath: string, value: unknown): { ok: boolean; 
     `${indent}"${key}": ${formatted}${hadComma ? "," : ""}` + (comment ? `  ${comment}` : "");
 
   try {
-    // 改之前先备份到 backup/，改坏了随时能翻回来
+
     backupFile(file);
     fs.writeFileSync(file, lines.join("\n"), "utf8");
   } catch (err) {
@@ -471,7 +469,7 @@ export function setConfigValue(keyPath: string, value: unknown): { ok: boolean; 
   return { ok: true, message: `${keyPath} = ${formatted}` };
 }
 
-/** 读取配置文件里的一项（不存在返回 undefined） */
+
 export function getConfigValue(keyPath: string): unknown {
   const config = loadFileConfig() as Record<string, unknown>;
   return keyPath.split(".").reduce<unknown>((acc, part) => {
@@ -480,7 +478,7 @@ export function getConfigValue(keyPath: string): unknown {
   }, config);
 }
 
-/** 列出配置文件里所有可改的键（段.键 / 键） */
+
 export function listConfigKeys(): string[] {
   const config = loadFileConfig() as Record<string, unknown>;
   const keys: string[] = [];
@@ -501,7 +499,7 @@ export function loadFileConfig(force = false): FileConfig {
 
   const file = getConfigFilePath();
   if (!fs.existsSync(file)) {
-    // 首次启动：自动生成一份带注释的默认配置
+
     ensureConfigFile();
   }
   if (!fs.existsSync(file)) {
@@ -525,12 +523,12 @@ export function loadFileConfig(force = false): FileConfig {
   return cachedFileConfig;
 }
 
-/** 让 config.json 生效后重新读取（目前只在启动时调用一次） */
+
 export function resetConfigCache(): void {
   cachedFileConfig = null;
 }
 
-/* -------------------------------------------------------- 环境变量 */
+
 
 export function loadConfigFromEnv(): Partial<ReverseProxyConfig> {
   const envRandomIdMode = process.env.RANDOM_ID_MODE;
@@ -554,7 +552,7 @@ export function loadConfigFromEnv(): Partial<ReverseProxyConfig> {
   };
 }
 
-/* ------------------------------------------------------------ 合并 */
+
 
 function resolvePath(value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(process.cwd(), value);
@@ -616,7 +614,7 @@ export function getAutomationConfig(): AutomationConfig {
 }
 
 
-/** imc-overlay：读 config.json 的 overlay 段 */
+
 export function getOverlayConfig(): OverlayConfig {
   const file = loadFileConfig().overlay ?? {};
   const mode = file.mode === "bedwars" || file.mode === "off" ? file.mode : "auto";
@@ -633,7 +631,7 @@ export function getOverlayConfig(): OverlayConfig {
   };
 }
 
-/** 服务器名伪装：读 config.json 的 serverNameSpoof（缺省 = imc → heypixel） */
+
 export function getServerNameSpoofConfig(): ServerNameSpoofConfig {
   const file = loadFileConfig().serverNameSpoof ?? {};
   const rawMappings = Array.isArray(file.mappings) ? file.mappings : DEFAULT_SERVER_NAME_SPOOF.mappings;
@@ -649,7 +647,7 @@ export function getServerNameSpoofConfig(): ServerNameSpoofConfig {
   };
 }
 
-/** 账号列表文件（/gameadd 写入的那份） */
+
 export function getGameAccountsFile(): string {
   return getAutomationConfig().gameAccountsFile;
 }
@@ -664,9 +662,8 @@ export function getNameProtectConfig(): NameProtectConfig {
   };
 }
 
-/**
- * 代理配置。优先级：环境变量 > config.json > 内置默认值。
- */export function getConfig(): ReverseProxyConfig {
+
+export function getConfig(): ReverseProxyConfig {
   const file = loadFileConfig();
   const envConfig = loadConfigFromEnv();
   const randomId = getRandomIdConfig();
@@ -690,30 +687,30 @@ export function getNameProtectConfig(): NameProtectConfig {
   };
 }
 
-/* ------------------------------------------------- 配置热更新 */
+
 
 export type ConfigChangeListener = (keyPath: string, value: unknown) => void;
 
 const configChangeListeners = new Set<ConfigChangeListener>();
 
-/** 订阅配置变更；返回取消订阅的函数 */
+
 export function onConfigChange(listener: ConfigChangeListener): () => void {
   configChangeListeners.add(listener);
   return () => configChangeListeners.delete(listener);
 }
 
-/** 通知所有订阅者 */
+
 export function notifyConfigChange(keyPath: string, value: unknown): void {
   for (const listener of configChangeListeners) {
     try {
       listener(keyPath, value);
     } catch {
-      /* 单个订阅者出错不影响其他 */
+
     }
   }
 }
 
-/** 改完立即生效的键（其余键仍然要重启） */
+
 export function isHotConfigKey(keyPath: string): boolean {
   return (
     keyPath === "debug" ||
@@ -723,10 +720,8 @@ export function isHotConfigKey(keyPath: string): boolean {
   );
 }
 
-/**
- * 修改配置并立即把变更推给运行时组件。
- * 写盘失败时不会通知，避免内存与文件不一致。
- */
+
+
 export function applyConfigValue(keyPath: string, value: unknown): { ok: boolean; message: string } {
   const result = setConfigValue(keyPath, value);
   if (result.ok) notifyConfigChange(keyPath, value);
