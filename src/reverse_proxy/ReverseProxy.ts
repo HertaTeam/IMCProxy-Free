@@ -777,6 +777,10 @@ export class ReverseProxy extends EventEmitter {
     this.emit("stopped");
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   getPlayerCount(): number {
     return this.players.size;
   }

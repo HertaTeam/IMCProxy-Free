@@ -137,7 +137,23 @@ export function closeRunLog(): void {
   logFilePath = null;
 }
 
+
+const LOG_RING: string[] = [];
+const LOG_RING_MAX = 300;
+
+function pushLogRing(line: string): void {
+  LOG_RING.push(line.replace(ANSI_RE, ""));
+  if (LOG_RING.length > LOG_RING_MAX) LOG_RING.shift();
+}
+
+export function recentLogs(limit = 100): string[] {
+  const size = Math.max(0, Math.min(Math.floor(limit), LOG_RING.length));
+  return size === 0 ? [] : LOG_RING.slice(LOG_RING.length - size);
+}
+
 export class Logger {
+  static capture: ((line: string) => void) | null = null;
+
   loggerName: string;
   verbose?: boolean;
   private jsonLog: boolean =
@@ -186,7 +202,10 @@ export class Logger {
     }
     if (toStderr) process.stderr.write(this.line(level, s, false) + "\n");
     else process.stdout.write(this.line(level, s, false) + "\n");
-    writeLogLine(this.line(level, s, true));
+    const forFile = this.line(level, s, true);
+    writeLogLine(forFile);
+    pushLogRing(forFile);
+    if (Logger.capture) Logger.capture(forFile);
   }
 
   info(s: string) {

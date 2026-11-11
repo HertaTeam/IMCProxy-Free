@@ -5,6 +5,7 @@ import { consoleUi } from "./ConsoleUi.js";
 import { ensureBackupDir } from "./Backup.js";
 import { printBanner } from "./Banner.js";
 import { changelogLines } from "./Changelog.js";
+import { ApiServer } from "./ApiServer.js";
 import { startAnnounce } from "./Announce.js";
 import { bumpDailyCount, checkForUpdates, formatNotice } from "./UpdateCheck.js";
 import {
@@ -14,6 +15,7 @@ import {
   getUpdateCheckConfig,
   getAutomationConfig,
   getConfigFilePath,
+  getApiConfig,
   onConfigChange,
 } from "./config.js";
 import { Logger, verboseLogging, color, startRunLog, closeRunLog, getLogFilePath, writeLogLine } from "../logger.js";
@@ -86,6 +88,9 @@ async function main() {
   consoleUi.enable(consoleConfig.echo);
 
   consoleCommands.start();
+
+  const apiServer = new ApiServer({ config: getApiConfig(), proxy, commands: consoleCommands });
+  apiServer.start();
   if (consoleConfig.autoHelp) consoleCommands.printHelp();
 
   announceTimer = startAnnounce(proxy, getAnnounceConfig());

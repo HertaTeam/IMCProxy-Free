@@ -75,6 +75,15 @@ export interface NameProtectConfig {
   scoreboard: boolean;
 }
 
+export interface ApiConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  token: string;
+}
+
+const DEFAULT_API: ApiConfig = { enabled: true, host: "127.0.0.1", port: 8790, token: "" };
+
 export interface FileConfig {
   tcpHost?: string;
   tcpPort?: number;
@@ -98,6 +107,7 @@ export interface FileConfig {
   nameProtect?: Partial<NameProtectConfig>;
   serverNameSpoof?: Partial<ServerNameSpoofConfig>;
   overlay?: Partial<OverlayConfig>;
+  api?: Partial<ApiConfig>;
 }
 
 
@@ -293,6 +303,13 @@ export const DEFAULT_CONFIG_TEMPLATE = `{
     "inGameReplies": true,
     "autoLoginOnJoin": true,
     "autoRegisterOnJoin": true
+  },
+
+  "api": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8790,
+    "token": ""
   },
 
   "overlay": {
@@ -614,6 +631,17 @@ export function getAutomationConfig(): AutomationConfig {
 }
 
 
+
+export function getApiConfig(): ApiConfig {
+  const file = loadFileConfig().api ?? {};
+  const port = Number(file.port ?? DEFAULT_API.port);
+  return {
+    enabled: file.enabled ?? DEFAULT_API.enabled,
+    host: (file.host || DEFAULT_API.host).trim(),
+    port: Number.isFinite(port) && port > 0 && port < 65536 ? port : DEFAULT_API.port,
+    token: (file.token ?? DEFAULT_API.token).trim(),
+  };
+}
 
 export function getOverlayConfig(): OverlayConfig {
   const file = loadFileConfig().overlay ?? {};

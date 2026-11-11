@@ -11,6 +11,7 @@ import {
   getAutomationConfig,
   getGameAccountsFile,
   getConfigFilePath,
+  getApiConfig,
   setConfigValue,
   applyConfigValue,
   isHotConfigKey,
@@ -69,6 +70,7 @@ const CONSOLE_COMMANDS = [
   "servername",
   "announce",
   "updatecheck",
+  "api",
   "settings",
   "backup",
   "update",
@@ -241,6 +243,10 @@ export class ConsoleCommands {
         this.setRandomId(argument);
         break;
 
+      case "api":
+        this.showApi();
+        break;
+
       case "changelog":
         this.showChangelog(argument);
         break;
@@ -300,6 +306,24 @@ export class ConsoleCommands {
       for (const change of entry.changes) this.logger.info(`  - ${change}`);
     }
   }
+  private showApi(): void {
+    const config = getApiConfig();
+    this.logger.section("HTTP API");
+    if (!config.enabled) {
+      this.logger.warn("API is disabled (config.json -> api.enabled = false).");
+      return;
+    }
+    const host = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
+    this.logger.kv("Base URL", "http://" + host + ":" + config.port + "/api");
+    this.logger.kv("Bind", config.host + ":" + config.port);
+    this.logger.kv("Token", config.token ? "required" : "not set (local only)");
+    this.logger.info("  GET  /api/status        proxy state and players");
+    this.logger.info("  GET  /api/config        every setting");
+    this.logger.info("  POST /api/config/<key>  {\"value\": ...}");
+    this.logger.info("  POST /api/start | /api/stop");
+    this.logger.info("  POST /api/command       {\"line\": \"/help\"}");
+  }
+
   private resetRandomId(): void {
     this.target.resetRandomId();
     this.printApplied();
@@ -650,6 +674,7 @@ export class ConsoleCommands {
     this.logger.info("  /<section>.<key> [value]          inspect or change one setting");
     this.logger.info("  /settings [section]              list every setting command (read only)");
     this.logger.info("  /changelog [all|version]           show the changelog");
+    this.logger.info("  /api                               show the HTTP API address and endpoints");
     this.logger.info("");
     this.logger.info("  game accounts:");
     this.logger.info("  /gamestatus                       list saved accounts (account + password)");

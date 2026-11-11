@@ -100,6 +100,40 @@ Windows 也可以直接双击 `build-and-run.bat`。
 - Minecraft **1.8.9** → `<代理IP>:25565`
 - Minecraft **1.12.2** → `<代理IP>:25566`（服务器简介显示 `[Beta]`）
 
+## HTTP API
+
+代理运行时会在本机启动一个 HTTP 接口，可用脚本开关代理、读取或修改配置、执行控制台命令并拿到输出。
+
+配置位于 `config.json` 的 `api` 段：
+
+```json
+"api": { "enabled": true, "host": "127.0.0.1", "port": 8790, "token": "" }
+```
+
+`token` 非空时，请求需要带 `?token=...` 或 `X-Api-Token` 头。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api` | 接口列表 |
+| GET | `/api/status` | 运行状态、监听地址、在线玩家 |
+| GET | `/api/config` | 全部配置项 |
+| GET | `/api/config/<key>` | 单个配置项与取值范围 |
+| POST | `/api/config/<key>` | body `{"value": ...}`，校验后写入 |
+| POST | `/api/start` / `/api/stop` | 启动或停止代理 |
+| POST | `/api/command` | body `{"line": "/tcpPort"}`，返回命令输出 |
+| GET | `/api/logs?tail=50` | 最近日志 |
+
+示例：
+
+```bash
+curl http://127.0.0.1:8790/api/status
+curl -X POST http://127.0.0.1:8790/api/config/tcpPort -H "Content-Type: application/json" -d "{\"value\":25566}"
+curl -X POST http://127.0.0.1:8790/api/command -H "Content-Type: application/json" -d "{\"line\":\"/help\"}"
+curl -X POST http://127.0.0.1:8790/api/stop
+```
+
+非法值会被拒绝且不会写入 `config.json`，例如 `tcpPort` 传 `abc` 返回 400 与原因。
+
 ## 控制台指令
 
 | 指令 | 说明 |
