@@ -24,14 +24,12 @@
   <img src="src/assets/19-65c0b720.jpg" alt="19-65c0b720" width="10%" />
 </p>
 
-# IMCProxy-Free
+# IMCProxyNextGen-Free
 
 让原版 Minecraft 客户端（1.8.9 / 1.12.2 Beta）连接 Eaglercraft WebSocket 服务器。
 
-> **项目状态：2.0.0 免费版（C++ 重写）**
->
-> 与正式版的区别：不连接 `imc.re`，没有浏览器登录与战绩 overlay，账号管理改为本地游戏账号。
->
+> **项目状态：2.0.0（C++ 重写）**
+>>
 > 交流群：**1131093494**
 
 ## 使用警告
@@ -204,18 +202,6 @@ password=FreePass123
 ```
 
 `randomId.preferAccounts` 为 `true` 时，进服会优先用 `game-accounts.txt` 里未被占用的账号 ID，并把该账号密码交给自动 `/login`。
-
-## 与正式版的区别
-
-| 功能 | 免费版 | 正式版 |
-| --- | --- | --- |
-| 1.8.9 / 1.12.2 代理 | 有 | 有 |
-| 名称保护 / 服务器名伪装 | 有 | 有 |
-| 本地游戏账号管理 | 有 | 有 |
-| 自动 `/login`、`/reg` | 有 | 有 |
-| imc.re 登录 / 绑定 / 封禁同步 | 无 | 有 |
-| 浏览器（Edge/CDP）自动化 | 无 | 有 |
-| 起床战争 Tab overlay | 有 | 有 |
 
 ## 已知问题
 
