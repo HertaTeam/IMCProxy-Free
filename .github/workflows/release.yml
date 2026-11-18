@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if (-not $version) { throw "VERSION file is empty" }
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v\d') { $tag = "v$version" }
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64
+          if ($LASTEXITCODE -ne 0) {
+            Remove-Item build -Recurse -Force -ErrorAction SilentlyContinue
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          }
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+          $exe = "build/Release/imcproxy.exe"
+          if (-not (Test-Path $exe)) { $exe = "build/imcproxy.exe" }
+          if (-not (Test-Path $exe)) { throw "imcproxy.exe not found" }
+
+          $date = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTimeOffset]::UtcNow, 'China Standard Time').ToString('yyMMdd')
+          $asset = "dist/imcproxy-free$date.exe"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item $exe $asset -Force
+          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "asset: $asset ($((Get-Item $asset).Length) bytes)"
+
+      - name: Upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ env.ASSET }}
+          overwrite_files: true
