@@ -43,8 +43,8 @@ jobs:
           if (-not (Test-Path $exe)) { $exe = "build/imcproxy.exe" }
           if (-not (Test-Path $exe)) { throw "imcproxy.exe not found" }
 
-          $date = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTimeOffset]::UtcNow, 'China Standard Time').ToString('yyMMdd')
-          $asset = "dist/imcproxy-free$date.exe"
+          # 固定文件名，重跑时靠 overwrite_files 覆盖，避免每次构建都新增一个资产
+          $asset = "dist/imcproxy-free-win64.exe"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item $exe $asset -Force
           "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
