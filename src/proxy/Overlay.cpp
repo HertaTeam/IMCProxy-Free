@@ -222,44 +222,53 @@ void Overlay::note_player_info(const std::vector<std::pair<std::string, int>>& e
     for (const auto& [name, ping] : entries) {
         if (name.empty() || name.size() > 16) continue;
         if (ping > 0) pings_[name] = ping;
-        if (std::find(roster_.begin(), roster_.end(), name) == roster_.end()) {
-            roster_.push_back(name);
-            last_refresh_ms_ = 0;
-        }
+        if (std::find(roster_.begin(), roster_.end(), name) == roster_.end()) roster_.push_back(name);
     }
 }
 
 void Overlay::note_world_change() {
-    std::lock_guard lock(mutex_);
-    if (!detected_ && stats_.empty()) return;
-    detected_ = false;
-    room_.clear();
-    stats_.clear();
-    pings_.clear();
-    roster_.clear();
-    last_refresh_ms_ = 0;
-    load_cache();
+    bool was_showing = false;
+    {
+        std::lock_guard lock(mutex_);
+        was_showing = detected_ || !stats_.empty();
+        detected_ = false;
+        room_.clear();
+        stats_.clear();
+        pings_.clear();
+        fetched_ms_.clear();
+        roster_.clear();
+        last_refresh_ms_ = 0;
+    }
+    if (!was_showing) return;
+    {
+        std::lock_guard lock(mutex_);
+        pending_clear_ = config_.get_bool("overlay.decorateTab", true);
+    }
     logger.info("World changed - Tab overlay closed");
 }
 
 void Overlay::refresh(bool force) {
     if (!is_active() || !enabled()) return;
     const long long now = now_ms();
-    const int refresh_seconds = static_cast<int>(config_.get_int("overlay.refreshSeconds", 300));
-    {
-        std::lock_guard lock(mutex_);
-        if (!force && now - last_refresh_ms_ < refresh_seconds * 1000LL) return;
-        last_refresh_ms_ = now;
-    }
+    const long long lifetime = static_cast<long long>(config_.get_int("overlay.refreshSeconds", 300)) * 1000LL;
     std::vector<std::string> names;
     {
         std::lock_guard lock(mutex_);
-        names.assign(roster_.begin(), roster_.end());
+        for (const auto& name : roster_) {
+            const auto cached = fetched_ms_.find(name);
+            if (!force && cached != fetched_ms_.end() && now - cached->second < lifetime) continue;
+            names.push_back(name);
+            if (names.size() >= 40) break;
+        }
     }
-    if (names.size() > 40) names.resize(40);
+    if (names.empty()) return;
     for (const auto& name : names) fetch_one(name);
-    std::lock_guard lock(mutex_);
-    save_cache();
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& name : names) fetched_ms_[name] = now;
+        last_refresh_ms_ = now;
+        save_cache();
+    }
 }
 
 void Overlay::fetch_one(const std::string& name) {
@@ -330,7 +339,7 @@ std::string Overlay::build_header() const {
     const std::string s = "\xc2\xa7";
     const std::vector<OverlayRow> rows = ranked();
     const size_t top = static_cast<size_t>(std::max<int64_t>(1, config_.get_int("overlay.topRows", 10)));
-    std::string header = s + "8" + s + "lIMC Overlay " + s + "7" + s + "\xc2\xb7" + " " + s + "fBedWars";
+    std::string header = s + "8" + s + "lIMC Overlay " + s + "7\xc2\xb7 " + s + "fBedWars";
     if (!room_.empty()) header += " " + s + "8" + room_;
     header += "\n" + s + "7" + pad_cell("Name", 15) + " " + pad_cell("Final", 5) + " " + pad_cell("F/D", 5) + " " +
               pad_cell("Wins", 4) + " " + pad_cell("W/L", 5) + " " + pad_cell("Beds", 4) + " " + pad_cell("BB/L", 5) +
@@ -389,6 +398,20 @@ void Overlay::worker() {
     while (running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         if (!running_) break;
+        bool clear_now = false;
+        {
+            std::lock_guard lock(mutex_);
+            clear_now = pending_clear_;
+            pending_clear_ = false;
+        }
+        if (clear_now && sender_) {
+            core::Writer writer;
+            writer.u8(tab_id_);
+            writer.string("{\"text\":\"\"}");
+            writer.string("{\"text\":\"\"}");
+            sender_(writer.take());
+            last_send_ms_ = now_ms();
+        }
         if (!is_active()) continue;
         if (!config_.get_bool("overlay.decorateTab", true)) continue;
         if (now_ms() - last_send_ms_ < 2000) continue;

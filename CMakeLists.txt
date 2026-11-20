@@ -20,7 +20,7 @@ file(GLOB_RECURSE IMCPROXY_SOURCES CONFIGURE_DEPENDS
 add_executable(imcproxy ${IMCPROXY_SOURCES})
 
 target_include_directories(imcproxy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_definitions(imcproxy PRIVATE IMCP_VERSION="${IMCP_VERSION}")
+target_compile_definitions(imcproxy PRIVATE IMCP_VERSION="${IMCP_VERSION}" IMCP_FREE_EDITION)
 
 target_link_libraries(imcproxy PRIVATE ws2_32 winhttp)
 

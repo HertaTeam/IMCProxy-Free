@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <optional>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -20,6 +22,8 @@
 #include "core/Logger.hpp"
 #include "core/Util.hpp"
 #include "features/Backup.hpp"
+#include "features/SettingsCommands.hpp"
+#include "core/Settings.hpp"
 #include "features/Banner.hpp"
 #include "features/Changelog.hpp"
 #include "features/GameAccounts.hpp"
@@ -60,68 +64,22 @@ void flatten(const Json& node, const std::string& prefix, std::vector<std::pair<
 }
 
 bool write_setting(const std::string& key, const std::string& value) {
-    auto& logger = console_logger;
-    const Json& current = g_config.root().path(key);
-    if (current.is_number()) {
-        try {
-            g_config.set_int(key, std::stoll(value));
-        } catch (...) {
-            logger.warn("expected a number for " + key);
-            return false;
-        }
-    } else if (current.is_boolean()) {
-        const std::string lowered = imcp::core::to_lower(value);
-        if (lowered == "true" || lowered == "on" || lowered == "1") {
-            g_config.set_bool(key, true);
-        } else if (lowered == "false" || lowered == "off" || lowered == "0") {
-            g_config.set_bool(key, false);
-        } else {
-            logger.warn("expected true/false for " + key);
-            return false;
-        }
-    } else if (current.is_string()) {
-        g_config.set_string(key, value);
-    } else {
-        logger.warn("unknown setting: " + key);
+    std::string error;
+    std::string note;
+    if (!imcp::features::apply_setting(g_config, key, value, error, note)) {
+        console_logger.warn(error);
         return false;
     }
-    imcp::features::backup_file("config.json");
-    g_config.save();
-    logger.info(key + " updated");
+    console_logger.info(key + " = " + value + "   (" + note + ")");
     return true;
 }
 
-bool setting_command(const std::string& command, const std::string& argument) {
-    std::vector<std::pair<std::string, Json>> flat;
-    flatten(g_config.root(), "", flat);
-
-    std::vector<std::string> matches;
-    for (const auto& [key, value] : flat) {
-        if (value.is_object()) continue;
-        const std::string lower = imcp::core::to_lower(key);
-        std::string last = lower;
-        const size_t dot = lower.rfind('.');
-        if (dot != std::string::npos) last = lower.substr(dot + 1);
-        if (lower == command || last == command) matches.push_back(key);
+void print_setting_lines(const std::vector<std::string>& lines, bool failed) {
+    for (const auto& line : lines) {
+        if (failed) console_logger.warn(line);
+        else console_logger.info(line);
     }
-    if (matches.empty()) return false;
-
-    auto& logger = console_logger;
-    if (matches.size() > 1) {
-        logger.warn("Ambiguous setting \"" + command + "\":");
-        for (const auto& item : matches) logger.info("  " + item);
-        return true;
-    }
-
-    const std::string& key = matches[0];
-    if (argument.empty()) {
-        logger.kv(key, g_config.root().path(key).dump(0));
-        return true;
-    }
-    write_setting(key, argument);
-    return true;
 }
-
 void print_banner() {
     std::cout << "IMCProxy " << imcp::features::app_version() << " (C++)\n";
     std::cout << "Minecraft 1.8.9 / 1.12.2 adapter for Eaglercraft servers\n\n";
@@ -156,13 +114,17 @@ void print_help() {
     logger.section("Console commands");
     logger.info("  /help                       show this help");
     logger.info("  /status                     show current state");
+    logger.info("  /savemap [map-id]           save the latest or specified map to maps/ as PNG");
     logger.info("  /start /stop                start or stop the listener");
     logger.info("  /<setting> [value]          read or write one setting (eg. /overlay.mode auto)");
     logger.info("  /gamestatus                 list saved game accounts");
     logger.info("  /logingame <#|account>      use a saved game account");
     logger.info("  /gameadd <account> <pass>   save a game account");
     logger.info("  /gamedel <#|account>        delete a game account");
-    logger.info("  /settings [section]         list every setting");
+    logger.info("  /config reload|validate|show  re-read config.json, check it, or print values");
+    logger.info("  /settings                   print every effective value");
+    logger.info("  config commands (each one validates its arguments):");
+    for (const auto& line : imcp::features::setting_group_help()) logger.info(line);
     logger.info("  /backup [label]             snapshot config + account files");
     logger.info("  /loginimc <user> <pass> [cap]  sign in to api.imc.re");
     logger.info("  /setname <name> /randomname  set the protected display name");
@@ -235,6 +197,23 @@ void handle_command(const std::string& raw) {
     auto& logger = console_logger;
     if (command == "help" || command == "?") {
         print_help();
+    } else if (command == "savemap") {
+        std::optional<int32_t> id;
+        if (!rest.empty()) {
+            int32_t parsed = 0;
+            const auto end = rest.data() + rest.size();
+            const auto result = std::from_chars(rest.data(), end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end || parsed < 0) {
+                logger.warn("Usage: /savemap [map-id] (0-2147483647)");
+                return;
+            }
+            id = parsed;
+        }
+        std::string path;
+        std::string error;
+        if (!g_server) logger.warn("Proxy is not initialized");
+        else if (!g_server->maps().save(id, path, error)) logger.warn(error);
+        else logger.info("Saved map to " + path);
     } else if (command == "status") {
         print_status();
     } else if (command == "start") {
@@ -378,28 +357,29 @@ void handle_command(const std::string& raw) {
         }
         logger.info(std::to_string(shown) + " settings. Use /<key> to read, /<key> <value> to write.");
     } else if (command == "config") {
-        std::istringstream rest_stream(rest);
-        std::string key;
-        rest_stream >> key;
-        std::string value;
-        std::getline(rest_stream, value);
-        value = imcp::core::trim(value);
-        if (key.empty() || value.empty()) {
-            logger.warn("usage: /config <key> <value>");
-            return;
-        }
-        write_setting(key, value);
+        bool failed = false;
+        print_setting_lines(imcp::features::run_config_root(g_config, rest, failed), failed);
+    } else if (imcp::features::is_setting_group(command)) {
+        bool failed = false;
+        print_setting_lines(imcp::features::run_setting_group(g_config, command, rest, failed), failed);
+    } else if (command == "settings") {
+        bool failed = false;
+        print_setting_lines(imcp::features::run_config_root(g_config, "show", failed), failed);
     } else if (command == "quit" || command == "exit") {
         stop_proxy();
         std::exit(0);
-    } else if (!setting_command(command, rest)) {
+    } else {
         logger.warn("Unknown command \"" + command + "\". Type /help to list commands.");
-    }
-}
+    }}
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    bool background = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--background") background = true;
+    }
+
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
@@ -461,6 +441,10 @@ int main() {
 
     start_proxy();
 
+    if (background) {
+        launcher.info("Running in background mode (no console input).");
+        while (true) std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 
     if (imcp::core::ConsoleInput::interactive()) {
         imcp::core::ConsoleInput::install([](const std::string& line) { run_command(line); });
@@ -471,7 +455,10 @@ int main() {
     while (true) {
         std::fputs(Logger::colors_enabled() ? "\x1b[32m> \x1b[0m" : "> ", stdout);
         std::fflush(stdout);
-        if (!std::getline(std::cin, line)) break;
+        if (!std::getline(std::cin, line)) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
         run_command(line);
     }
     Logger::close_run_log();

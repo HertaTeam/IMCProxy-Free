@@ -65,7 +65,8 @@ void Automation::note_chat(const std::string& plain) {
     if (!enabled() || plain.empty()) return;
     const std::string flat = core::to_lower(plain);
 
-    if (contains(flat, "请使用/reg") || contains(flat, "请使用 /reg")) {
+    if (contains(flat, "请使用/reg") || contains(flat, "请使用 /reg") || contains(flat, "请注册") ||
+        contains(flat, "注册账号") || contains(flat, "请输入注册")) {
         if (!config_.get_bool("automation.autoRegisterOnJoin", true) || has_pending("register")) return;
         const std::string password = current_password();
         if (password.empty()) {
@@ -78,7 +79,9 @@ void Automation::note_chat(const std::string& plain) {
         return;
     }
 
-    if (contains(flat, "请使用/login") || contains(flat, "请使用 /login")) {
+    if (contains(flat, "请使用/login") || contains(flat, "请使用 /login") ||
+        (contains(flat, "登录") && (contains(flat, "密码") || contains(flat, "password"))) ||
+        contains(flat, "请输入密码")) {
         if (!config_.get_bool("automation.autoLoginOnJoin", true) || has_pending("login")) return;
         const std::string password = current_password();
         if (password.empty()) {

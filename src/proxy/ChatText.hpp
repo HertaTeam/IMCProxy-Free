@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -16,5 +17,7 @@ bool rewrite_component_text(const std::string& json_text, const std::vector<std:
 
 std::string replace_plain_text(const std::string& text, const std::vector<std::string>& names,
                                const std::string& display);
+
+bool map_component_text(core::Json& node, const std::function<std::string(const std::string&)>& transform);
 
 }  // namespace imcp::proxy

@@ -45,7 +45,17 @@ bool TcpListener::start(const std::string& host, uint16_t port, ClientHandler ha
     if (host.empty() || host == "0.0.0.0") {
         address.sin_addr.s_addr = INADDR_ANY;
     } else {
-        inet_pton(AF_INET, host.c_str(), &address.sin_addr);
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* resolved = nullptr;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &resolved) != 0 || resolved == nullptr) {
+            error = "cannot resolve listen address \"" + host + "\"";
+            closesocket(socket_handle);
+            return false;
+        }
+        address.sin_addr = reinterpret_cast<sockaddr_in*>(resolved->ai_addr)->sin_addr;
+        freeaddrinfo(resolved);
     }
 
     if (bind(socket_handle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {

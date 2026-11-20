@@ -13,20 +13,55 @@ namespace imcp::proxy {
 
 namespace {
 core::Logger logger("ReverseProxy");
-}
 
+std::string clamp(std::string text, int max_chars) { return core::clamp_utf16(text, max_chars); }
 
-namespace {
-std::string clamp(std::string text, int max_chars) {
-    return core::clamp_utf16(text, max_chars);
+bool replace_ci(const std::string& from, const std::string& to, bool case_insensitive, const std::string& input,
+                std::string& output) {
+    if (from.empty()) return false;
+    std::string result;
+    result.reserve(input.size());
+    bool changed = false;
+    size_t position = 0;
+    while (position < input.size()) {
+        bool hit = false;
+        size_t offset = 0;
+        if (input.size() - position >= from.size()) {
+            if (!case_insensitive) {
+                hit = input.compare(position, from.size(), from) == 0;
+            } else {
+                hit = true;
+                for (size_t i = 0; i < from.size(); ++i) {
+                    const unsigned char left = static_cast<unsigned char>(input[position + i]);
+                    const unsigned char right = static_cast<unsigned char>(from[i]);
+                    if (std::tolower(left) != std::tolower(right)) {
+                        hit = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if (hit) {
+            result += to;
+            position += from.size();
+            changed = true;
+            continue;
+        }
+        result.push_back(input[position]);
+        ++position;
+        (void)offset;
+    }
+    if (changed) output = std::move(result);
+    return changed;
 }
-}  // namespace
+}
 
 Rewriter::Rewriter(core::Config& config) : config_(config) {
     name_protect_ = config_.get_bool("nameProtect.enabled", false);
     display_ = config_.get_string("nameProtect.name", "");
 
     spoof_enabled_ = config_.get_bool("serverNameSpoof.enabled", false);
+    spoof_case_insensitive_ = config_.get_bool("serverNameSpoof.caseInsensitive", true);
     spoof_chat_ = config_.get_bool("serverNameSpoof.targets.chat", true);
     spoof_tab_ = config_.get_bool("serverNameSpoof.targets.tab", true);
     spoof_title_ = config_.get_bool("serverNameSpoof.targets.title", true);
@@ -55,6 +90,11 @@ void Rewriter::set_protocol(int protocol) {
     }
 }
 
+void Rewriter::set_map_archive(MapArchive& archive) {
+    map_archive_ = &archive;
+    map_session_ = archive.new_session();
+}
+
 void Rewriter::set_identity(const std::string& requested, const std::string& upstream) {
     names_.clear();
     if (!requested.empty()) names_.push_back(requested);
@@ -66,18 +106,7 @@ std::string Rewriter::spoof_plain(const std::string& text) const {
     std::string result = text;
     for (const auto& [from, to] : mappings_) {
         std::string replaced;
-        size_t position = 0;
-        while (position < result.size()) {
-            size_t hit = result.find(from, position);
-            if (hit == std::string::npos) {
-                replaced.append(result, position, std::string::npos);
-                break;
-            }
-            replaced.append(result, position, hit - position);
-            replaced += to;
-            position = hit + from.size();
-        }
-        result = replaced;
+        if (replace_ci(from, to, spoof_case_insensitive_, result, replaced)) result = replaced;
     }
     return result;
 }
@@ -90,10 +119,7 @@ bool Rewriter::spoof_component(std::string& json_text) const {
     } catch (...) {
         return false;
     }
-    bool changed = false;
-    for (const auto& [from, to] : mappings_) {
-        changed = replace_in_component(parsed, {from}, to) || changed;
-    }
+    const bool changed = map_component_text(parsed, [this](const std::string& text) { return spoof_plain(text); });
     if (!changed) return false;
     json_text = parsed.dump(0);
     return true;
@@ -108,7 +134,7 @@ std::string Rewriter::apply_plain(const std::string& text, int max_chars) const 
     return clamp(result, max_chars);
 }
 
-std::string Rewriter::apply_component(const std::string& json_text, int max_chars) const {
+std::string Rewriter::apply_component(const std::string& json_text, int max_chars, bool allow_spoof) const {
     std::string result = json_text;
     bool changed = false;
     if (name_protect_ && !display_.empty() && !names_.empty()) {
@@ -118,15 +144,25 @@ std::string Rewriter::apply_component(const std::string& json_text, int max_char
             changed = true;
         }
     }
-    std::string spoofed = result;
-    if (spoof_component(spoofed) && (max_chars <= 0 || static_cast<int>(spoofed.size()) <= max_chars)) {
-        result = spoofed;
-        changed = true;
+    if (allow_spoof) {
+        std::string spoofed = result;
+        if (spoof_component(spoofed) && (max_chars <= 0 || static_cast<int>(spoofed.size()) <= max_chars)) {
+            result = spoofed;
+            changed = true;
+        }
     }
     return changed ? result : json_text;
 }
 
+std::string Rewriter::apply_field(const std::string& text, int max_chars, bool allow_spoof) const {
+    if (!text.empty() && (text.front() == '{' || text.front() == '[')) {
+        return apply_component(text, max_chars, allow_spoof);
+    }
+    return apply_plain(text, max_chars);
+}
+
 std::string Rewriter::rewrite_chat(const std::string& payload) {
+    if (!name_protect_ && !(spoof_enabled_ && spoof_chat_)) return payload;
     core::Reader reader(payload);
     reader.varint();
     std::string json = reader.string();
@@ -144,7 +180,7 @@ std::string Rewriter::rewrite_chat(const std::string& payload) {
         if (automation_) automation_->note_chat(plain);
     }
 
-    std::string rewritten = apply_component(json, 32767);
+    std::string rewritten = apply_component(json, 32767, spoof_chat_);
     if (rewritten == json) return payload;
 
     core::Writer writer;
@@ -155,30 +191,31 @@ std::string Rewriter::rewrite_chat(const std::string& payload) {
 }
 
 std::string Rewriter::rewrite_brand(const std::string& payload) {
-    if (!spoof_brand_ || mappings_.empty()) return payload;
+    if (!spoof_enabled_ || !spoof_brand_ || mappings_.empty()) return payload;
     core::Reader reader(payload);
     reader.varint();
     std::string channel;
+    std::string brand;
     try {
         channel = reader.string();
+        brand = reader.string();
     } catch (...) {
         return payload;
     }
-    const std::string rest = std::string(reader.rest());
-    if (rest.empty()) return payload;
-    const std::string spoofed = spoof_plain(rest);
-    if (spoofed == rest || spoofed.size() > 255) return payload;
+    if (channel != "MC|Brand") return payload;
+
+    const std::string spoofed = spoof_plain(brand);
+    if (spoofed == brand || spoofed.empty()) return payload;
 
     core::Writer writer;
     writer.u8(static_cast<uint8_t>(payload[0]));
     writer.string(channel);
-    writer.varint(static_cast<int32_t>(spoofed.size()));
-    writer.raw(spoofed);
+    writer.string(spoofed);
     return writer.take();
 }
 
 std::string Rewriter::rewrite_tab(const std::string& payload) {
-    if (!spoof_tab_) return payload;
+    if (!name_protect_ && !(spoof_enabled_ && spoof_tab_)) return payload;
     core::Reader reader(payload);
     reader.varint();
     std::string header;
@@ -189,8 +226,8 @@ std::string Rewriter::rewrite_tab(const std::string& payload) {
     } catch (...) {
         return payload;
     }
-    const std::string new_header = apply_component(header, 32767);
-    const std::string new_footer = apply_component(footer, 32767);
+    const std::string new_header = apply_component(header, 32767, spoof_tab_);
+    const std::string new_footer = apply_component(footer, 32767, spoof_tab_);
     if (new_header == header && new_footer == footer) return payload;
 
     core::Writer writer;
@@ -201,7 +238,7 @@ std::string Rewriter::rewrite_tab(const std::string& payload) {
 }
 
 std::string Rewriter::rewrite_title(const std::string& payload) {
-    if (!spoof_title_) return payload;
+    if (!name_protect_ && !(spoof_enabled_ && spoof_title_)) return payload;
     core::Reader reader(payload);
     reader.varint();
     int32_t action = 0;
@@ -217,7 +254,7 @@ std::string Rewriter::rewrite_title(const std::string& payload) {
     } catch (...) {
         return payload;
     }
-    const std::string rewritten = apply_component(json, 32767);
+    const std::string rewritten = apply_component(json, 32767, spoof_title_);
     if (rewritten == json) return payload;
 
     core::Writer writer;
@@ -228,6 +265,33 @@ std::string Rewriter::rewrite_title(const std::string& payload) {
 }
 
 std::string Rewriter::rewrite_player_info(const std::string& payload) {
+    if (!name_protect_) {
+        try {
+            core::Reader reader(payload);
+            reader.varint();
+            const int32_t action = reader.varint();
+            const int32_t count = reader.varint();
+            if (action != 0 || count < 0 || count > 1024) return payload;
+            std::vector<std::pair<std::string, int>> entries;
+            for (int32_t i = 0; i < count; ++i) {
+                reader.bytes(16);
+                const std::string name = reader.string();
+                const int32_t properties = reader.varint();
+                for (int32_t p = 0; p < properties; ++p) {
+                    reader.string();
+                    reader.string();
+                    if (reader.boolean()) reader.string();
+                }
+                reader.varint();
+                const int32_t ping = reader.varint();
+                entries.emplace_back(name, ping);
+                if (reader.boolean()) reader.string();
+            }
+            if (overlay_ && !entries.empty()) overlay_->note_player_info(entries);
+        } catch (...) {
+        }
+        return payload;
+    }
     try {
         core::Reader reader(payload);
         reader.varint();
@@ -293,7 +357,7 @@ std::string Rewriter::rewrite_objective(const std::string& payload) {
         writer.string(name);
         writer.u8(action);
         if (action == 0 || action == 2) {
-            writer.string(apply_component(reader.string(), 32));
+            writer.string(apply_field(reader.string(), 32, spoof_scoreboard_));
             writer.string(reader.string());
         }
         return writer.take();
@@ -306,20 +370,38 @@ std::string Rewriter::rewrite_score(const std::string& payload) {
     try {
         core::Reader reader(payload);
         reader.varint();
-        const int32_t action = reader.varint();
+        std::string score_name;
+        std::string objective;
+        uint8_t action = 0;
+        if (protocol_ == 340) {
+            action = static_cast<uint8_t>(reader.varint());
+            score_name = reader.string();
+            objective = reader.string();
+        } else {
+            score_name = reader.string();
+            action = reader.u8();
+            objective = reader.string();
+        }
+        const bool has_value = action != 1;
+        int32_t value = 0;
+        if (has_value) value = reader.varint();
+
+        const std::string new_name = apply_plain(score_name, 40);
+        const std::string new_objective = apply_plain(objective, 40);
+        if (new_name == score_name && new_objective == objective) return payload;
+
         core::Writer writer;
         writer.u8(static_cast<uint8_t>(payload[0]));
-
-        if (action == 0) {
-            writer.string(apply_plain(reader.string(), 40));
-            writer.varint(reader.varint());
-            writer.string(apply_plain(reader.string(), 40));
-            writer.varint(reader.varint());
+        if (protocol_ == 340) {
+            writer.varint(action);
+            writer.string(new_name);
+            writer.string(new_objective);
         } else {
-            writer.string(apply_plain(reader.string(), 40));
-            writer.varint(reader.varint());
-            writer.string(apply_plain(reader.string(), 40));
+            writer.string(new_name);
+            writer.u8(action);
+            writer.string(new_objective);
         }
+        if (has_value) writer.varint(value);
         return writer.take();
     } catch (...) {
         return payload;
@@ -339,9 +421,9 @@ std::string Rewriter::rewrite_team(const std::string& payload) {
         writer.u8(mode);
 
         if (mode == 0 || mode == 2) {
-            writer.string(apply_component(reader.string(), 32));
-            writer.string(apply_component(reader.string(), 16));
-            writer.string(apply_component(reader.string(), 16));
+            writer.string(apply_field(reader.string(), 32, spoof_scoreboard_));
+            writer.string(apply_field(reader.string(), 16, spoof_scoreboard_));
+            writer.string(apply_field(reader.string(), 16, spoof_scoreboard_));
             writer.u8(reader.u8());
             writer.string(reader.string());
             if (protocol_ == 340) {
@@ -362,7 +444,12 @@ std::string Rewriter::rewrite_team(const std::string& payload) {
 
 std::string Rewriter::process(const std::string& payload) {
     if (payload.empty()) return payload;
+    if (map_archive_ && static_cast<uint8_t>(payload[0]) == (protocol_ == 340 ? 0x24 : 0x34)) {
+        map_archive_->note(map_session_, protocol_, payload);
+        return payload;
+    }
     if (payload[0] == static_cast<char>(ids_.join_game)) {
+        if (map_archive_) map_session_ = map_archive_->new_session();
         if (overlay_) overlay_->note_world_change();
         return payload;
     }
@@ -392,5 +479,4 @@ std::string Rewriter::process(const std::string& payload) {
     return payload;
 }
 
-
-}  // namespace imcp::proxy
+}

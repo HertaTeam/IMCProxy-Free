@@ -12,6 +12,7 @@ public:
     static Json defaults();
 
     bool load(const std::string& path);
+    bool reload(std::string& error);
     bool save() const;
     bool save_as(const std::string& path) const;
 

@@ -22,6 +22,40 @@ void collect_plain(const core::Json& node, std::string& out) {
     if (node.has("extra")) collect_plain(node["extra"], out);
 }
 
+bool map_text_node(core::Json& node, const std::function<std::string(const std::string&)>& transform) {
+    bool changed = false;
+    if (node.is_string()) {
+        const std::string text = node.as_string();
+        const std::string result = transform(text);
+        if (result != text) {
+            node = core::Json(result);
+            return true;
+        }
+        return false;
+    }
+    if (node.is_array()) {
+        for (auto& item : node.items()) changed = map_text_node(item, transform) || changed;
+        return changed;
+    }
+    if (!node.is_object()) return false;
+
+    for (const char* key : {"text", "displayName", "prefix", "suffix"}) {
+        if (!node.has(key)) continue;
+        core::Json& value = node[key];
+        if (!value.is_string()) continue;
+        const std::string text = value.as_string();
+        const std::string result = transform(text);
+        if (result != text) {
+            value = core::Json(result);
+            changed = true;
+        }
+    }
+    for (const char* key : {"extra", "with"}) {
+        if (node.has(key)) changed = map_text_node(node[key], transform) || changed;
+    }
+    return changed;
+}
+
 bool replace_text_node(core::Json& node, const std::vector<std::string>& names, const std::string& display) {
     bool changed = false;
     if (node.is_string()) {
@@ -142,4 +176,8 @@ std::string replace_plain_text(const std::string& text, const std::vector<std::s
     return result;
 }
 
+bool map_component_text(core::Json& node, const std::function<std::string(const std::string&)>& transform) {
+    if (!transform) return false;
+    return map_text_node(node, transform);
+}
 }  // namespace imcp::proxy

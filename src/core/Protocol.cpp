@@ -44,16 +44,14 @@ double Reader::f64() { return read_be<double>(data_, pos_); }
 bool Reader::boolean() { return u8() != 0; }
 
 int32_t Reader::varint() {
-    int32_t result = 0;
-    int shift = 0;
-    while (true) {
-        uint8_t byte = u8();
-        result |= static_cast<int32_t>(byte & 0x7F) << shift;
-        if ((byte & 0x80) == 0) break;
-        shift += 7;
-        if (shift > 35) throw std::runtime_error("varint too long");
+    uint32_t result = 0;
+    for (int shift = 0; shift <= 28; shift += 7) {
+        const uint8_t byte = u8();
+        if (shift == 28 && (byte & 0xf0)) throw std::runtime_error("varint too long");
+        result |= static_cast<uint32_t>(byte & 0x7f) << shift;
+        if ((byte & 0x80) == 0) return static_cast<int32_t>(result);
     }
-    return result;
+    throw std::runtime_error("varint too long");
 }
 
 int64_t Reader::varlong() {

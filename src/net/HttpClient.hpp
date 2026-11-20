@@ -11,6 +11,7 @@ struct HttpResponse {
     int status = 0;
     std::string body;
     std::string set_cookie;
+    std::vector<std::string> set_cookies;
     std::string error;
 };
 

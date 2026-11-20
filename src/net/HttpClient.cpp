@@ -1,5 +1,7 @@
 #include "net/HttpClient.hpp"
 
+#include <cctype>
+
 #include <windows.h>
 #include <winhttp.h>
 
@@ -116,21 +118,37 @@ HttpResponse http_request(const std::string& method, const std::string& url, con
                         &status, &size, WINHTTP_NO_HEADER_INDEX);
     response.status = static_cast<int>(status);
 
-    DWORD cookie_size = 0;
-    WinHttpQueryHeaders(request, WINHTTP_QUERY_SET_COOKIE, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &cookie_size,
+    DWORD raw_size = 0;
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &raw_size,
                         WINHTTP_NO_HEADER_INDEX);
-    if (cookie_size > sizeof(wchar_t)) {
-        std::vector<wchar_t> buffer(cookie_size / sizeof(wchar_t) + 1, L'\0');
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_SET_COOKIE, WINHTTP_HEADER_NAME_BY_INDEX, buffer.data(),
-                                &cookie_size, WINHTTP_NO_HEADER_INDEX)) {
-            int bytes = WideCharToMultiByte(CP_UTF8, 0, buffer.data(), -1, nullptr, 0, nullptr, nullptr);
+    if (raw_size > sizeof(wchar_t)) {
+        std::vector<wchar_t> raw(raw_size / sizeof(wchar_t) + 1, L'\0');
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_HEADER_NAME_BY_INDEX, raw.data(),
+                                &raw_size, WINHTTP_NO_HEADER_INDEX)) {
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, raw.data(), -1, nullptr, 0, nullptr, nullptr);
             if (bytes > 1) {
-                std::string cookie(static_cast<size_t>(bytes - 1), '\0');
-                WideCharToMultiByte(CP_UTF8, 0, buffer.data(), -1, cookie.data(), bytes, nullptr, nullptr);
-                response.set_cookie = cookie;
+                std::string headers(static_cast<size_t>(bytes - 1), '\0');
+                WideCharToMultiByte(CP_UTF8, 0, raw.data(), -1, headers.data(), bytes, nullptr, nullptr);
+                size_t line_start = 0;
+                while (line_start < headers.size()) {
+                    const size_t line_end = headers.find("\r\n", line_start);
+                    const std::string line = headers.substr(line_start, line_end == std::string::npos
+                                                                              ? std::string::npos
+                                                                              : line_end - line_start);
+                    std::string lowered = line;
+                    for (auto& ch : lowered) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    if (lowered.rfind("set-cookie:", 0) == 0) {
+                        std::string cookie = line.substr(11);
+                        while (!cookie.empty() && (cookie.front() == ' ' || cookie.front() == '\t')) cookie.erase(0, 1);
+                        if (!cookie.empty()) response.set_cookies.push_back(cookie);
+                    }
+                    if (line_end == std::string::npos) break;
+                    line_start = line_end + 2;
+                }
             }
         }
     }
+    if (!response.set_cookies.empty()) response.set_cookie = response.set_cookies.front();
 
     std::vector<char> buffer(16384);
     DWORD read = 0;

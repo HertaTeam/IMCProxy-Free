@@ -214,9 +214,17 @@ void Server::handle_login(uintptr_t socket_handle, const std::string& requested,
             logger.info("No free game account available; using generated ID \"" + name + "\"");
         }
     } else {
-        name = upstream_name(requested);
+        name = (mode == "off" && !startup_id_.empty()) ? startup_id_ : upstream_name(requested);
     }
 
+    if (account_password.empty()) {
+        features::GameAccounts accounts(config_.get_string("automation.gameAccountsFile", "game-accounts.txt"));
+        for (const auto& entry : accounts.entries()) {
+            if (core::to_lower(entry.account) != core::to_lower(name)) continue;
+            account_password = entry.password;
+            break;
+        }
+    }
     logger.info("\xe2\x86\x92 Player connected: " + requested);
 
     net::WsClient ws;
@@ -234,6 +242,10 @@ void Server::handle_login(uintptr_t socket_handle, const std::string& requested,
         std::string error;
         send_packet(socket_handle, disconnect_packet("Upstream connection failed: " + result.error), error);
         shutdown(static_cast<SOCKET>(socket_handle), SD_SEND);
+        {
+            std::lock_guard lock(pool_mutex_);
+            active_ids_.erase(core::to_lower(name));
+        }
         Sleep(150);
         return;
     }
@@ -245,6 +257,10 @@ void Server::handle_login(uintptr_t socket_handle, const std::string& requested,
     std::string error;
     if (!send_packet(socket_handle, success.take(), error)) {
         ws.close();
+        {
+            std::lock_guard lock(pool_mutex_);
+            active_ids_.erase(core::to_lower(name));
+        }
         return;
     }
 
@@ -282,6 +298,7 @@ void Server::handle_login(uintptr_t socket_handle, const std::string& requested,
     Rewriter rewriter(config_);
     rewriter.set_identity(requested, result.username);
     rewriter.set_protocol(protocol);
+    rewriter.set_map_archive(maps_);
     rewriter.set_overlay(&overlay);
     rewriter.set_automation(&automation);
     run_bridge(socket_handle, ws, requested, rewriter, write_mutex);

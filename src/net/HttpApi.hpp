@@ -26,7 +26,8 @@ public:
 
 private:
     void handle_client(uintptr_t socket_handle);
-    std::string route(const std::string& method, const std::string& path, const std::string& body);
+    std::string route(const std::string& method, const std::string& path, const std::string& body,
+                      const std::string& query, const std::string& token);
 
     core::Config& config_;
     proxy::Server* server_ = nullptr;

@@ -7,7 +7,9 @@
 
 #include "core/Json.hpp"
 #include "core/Logger.hpp"
+#include "core/Util.hpp"
 #include "features/Backup.hpp"
+#include "features/SettingsCommands.hpp"
 #include "features/Changelog.hpp"
 #include "proxy/McStream.hpp"
 #include "proxy/Server.hpp"
@@ -62,6 +64,30 @@ void flatten(const core::Json& node, const std::string& prefix, std::vector<std:
     }
 }
 
+bool is_secret_key(const std::string& key) {
+    return key == "api.token" || key == "imc.apiToken" || key == "automation.defaultGamePassword";
+}
+
+core::Json masked_value(const std::string& key, const core::Json& value) {
+    if (!is_secret_key(key)) return value;
+    if (value.is_string() && value.as_string().empty()) return value;
+    return core::Json("***");
+}
+
+std::string query_param(const std::string& query, const std::string& name) {
+    size_t start = 0;
+    while (start <= query.size()) {
+        const size_t amp = query.find('&', start);
+        const std::string pair = query.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
+        const size_t equals = pair.find('=');
+        const std::string key = equals == std::string::npos ? pair : pair.substr(0, equals);
+        if (key == name) return equals == std::string::npos ? "" : pair.substr(equals + 1);
+        if (amp == std::string::npos) break;
+        start = amp + 1;
+    }
+    return "";
+}
+
 bool as_number(const std::string& text, double& out) {
     try {
         size_t used = 0;
@@ -103,6 +129,7 @@ bool HttpApi::start(std::string& error) {
 void HttpApi::stop() { listener_.stop(); }
 
 void HttpApi::handle_client(uintptr_t socket_handle) {
+    try {
     proxy::set_socket_timeout(socket_handle, 10);
     std::string request;
     char buffer[4096];
@@ -125,14 +152,27 @@ void HttpApi::handle_client(uintptr_t socket_handle) {
     std::string path;
     std::string version;
     first >> method >> path >> version;
+    std::string query;
+    const size_t question = path.find('?');
+    if (question != std::string::npos) {
+        query = path.substr(question + 1);
+        path = path.substr(0, question);
+    }
 
     size_t content_length = 0;
+    std::string token;
     std::string line;
     while (std::getline(lines, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string lowered = line;
         for (auto& c : lowered) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (lowered.rfind("content-length:", 0) == 0) {
+        if (lowered.rfind("x-api-token:", 0) == 0) {
+            token = core::trim(line.substr(12));
+        } else if (lowered.rfind("authorization:", 0) == 0) {
+            std::string bearer = core::trim(line.substr(14));
+            if (bearer.size() > 7 && core::to_lower(bearer.substr(0, 7)) == "bearer ") bearer = core::trim(bearer.substr(7));
+            token = bearer;
+        } else if (lowered.rfind("content-length:", 0) == 0) {
             try {
                 content_length = static_cast<size_t>(std::stoul(line.substr(15)));
             } catch (...) {
@@ -146,17 +186,30 @@ void HttpApi::handle_client(uintptr_t socket_handle) {
     }
     if (body.size() > content_length) body.resize(content_length);
 
-    std::string response = route(method, path, body);
+    if (token.empty()) token = query_param(query, "token");
+    std::string response = route(method, path, body, query, token);
     proxy::send_all(socket_handle, response);
     shutdown(static_cast<SOCKET>(socket_handle), SD_SEND);
+    } catch (const std::exception& error) {
+        logger.error(std::string("http handler failed: ") + error.what());
+    } catch (...) {
+        logger.error("http handler failed: unknown error");
+    }
 }
 
-std::string HttpApi::route(const std::string& method, const std::string& path, const std::string& body) {
+std::string HttpApi::route(const std::string& method, const std::string& path, const std::string& body,
+                           const std::string& query, const std::string& token) {
+    (void)query;
     const std::string prefix = "/api";
     if (path.rfind(prefix, 0) != 0) return http_response(404, ok_json(error_json("not found")));
 
     std::string route_path = path.substr(prefix.size());
     if (route_path.empty()) route_path = "/";
+
+    const std::string expected_token = config_.get_string("api.token", "");
+    if (!expected_token.empty() && token != expected_token) {
+        return http_response(401, ok_json(error_json("unauthorized: send X-Api-Token, Authorization: Bearer, or ?token=")));
+    }
 
     if (route_path == "/" && method == "GET") {
         core::Json root = core::Json::object();
@@ -231,7 +284,7 @@ std::string HttpApi::route(const std::string& method, const std::string& path, c
             if (value.is_object()) continue;
             core::Json item = core::Json::object();
             item["key"] = key;
-            item["value"] = value;
+            item["value"] = masked_value(key, value);
             settings.push(item);
         }
         root["settings"] = settings;
@@ -247,49 +300,33 @@ std::string HttpApi::route(const std::string& method, const std::string& path, c
             core::Json root = core::Json::object();
             root["ok"] = true;
             root["key"] = key;
-            root["value"] = current;
+            root["value"] = masked_value(key, current);
             return http_response(200, ok_json(root));
         }
 
         if (method == "POST") {
             std::string value_text;
+            bool has_value = false;
             try {
                 core::Json parsed = core::Json::parse(body);
                 if (parsed.is_object() && parsed.has("value")) {
                     value_text = parsed["value"].is_string() ? parsed["value"].as_string() : parsed["value"].dump(0);
+                    has_value = true;
                 } else {
                     value_text = body;
+                    has_value = true;
                 }
             } catch (...) {
                 value_text = body;
+                has_value = true;
             }
-            if (value_text.empty()) return http_response(400, ok_json(error_json("missing value")));
+            if (!has_value) return http_response(400, ok_json(error_json("missing value")));
 
-            bool ok = false;
-            if (current.is_number()) {
-                double number = 0;
-                if (!as_number(value_text, number)) {
-                    return http_response(400, ok_json(error_json("expected a number")));
-                }
-                config_.set_int(key, static_cast<int64_t>(number));
-                ok = true;
-            } else if (current.is_boolean()) {
-                std::string lowered = value_text;
-                for (auto& c : lowered) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (lowered == "true" || lowered == "1" || lowered == "on") {
-                    config_.set_bool(key, true);
-                    ok = true;
-                } else if (lowered == "false" || lowered == "0" || lowered == "off") {
-                    config_.set_bool(key, false);
-                    ok = true;
-                } else {
-                    return http_response(400, ok_json(error_json("expected true/false")));
-                }
-            } else if (current.is_string()) {
-                config_.set_string(key, value_text);
-                ok = true;
+            std::string error;
+            std::string note;
+            if (!features::apply_setting(config_, key, value_text, error, note)) {
+                return http_response(400, ok_json(error_json(error)));
             }
-            if (!ok) return http_response(400, ok_json(error_json("cannot set " + key)));
             features::backup_file("config.json");
             config_.save();
 

@@ -1,3 +1,4 @@
+#include <winsock2.h>
 #include "proxy/EaglerBridge.hpp"
 
 #include <atomic>
@@ -161,7 +162,9 @@ void run_bridge(uintptr_t client_socket, net::WsClient& ws, const std::string& p
         std::string payload;
         std::string error;
         while (!stop.load()) {
-            if (!receive_packet(client_socket, payload, error)) {
+            const PacketRead read = receive_packet_interruptible(client_socket, payload, stop, error);
+            if (read == PacketRead::Stopped) break;
+            if (read == PacketRead::Closed) {
                 if (!stop.load()) logger.info("[" + player_name + "] client disconnected");
                 break;
             }
@@ -182,7 +185,7 @@ void run_bridge(uintptr_t client_socket, net::WsClient& ws, const std::string& p
             break;
         }
         if (type != net::WsClient::FrameType::Binary || payload.empty()) continue;
-        if (static_cast<uint8_t>(payload[0]) == 0x46) continue;
+
         payload = rewriter.process(payload);
         if (payload.empty()) continue;
         std::lock_guard client_lock(*write_mutex);
@@ -193,6 +196,7 @@ void run_bridge(uintptr_t client_socket, net::WsClient& ws, const std::string& p
     }
 
     stop = true;
+    shutdown(static_cast<SOCKET>(client_socket), SD_BOTH);
     if (to_upstream.joinable()) to_upstream.join();
 }
 

@@ -71,6 +71,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, OverlayRow> stats_;
     std::map<std::string, int> pings_;
+    std::map<std::string, long long> fetched_ms_;
     std::vector<std::string> roster_;
     std::string self_name_;
     std::string room_;
@@ -78,6 +79,7 @@ private:
     long long last_refresh_ms_ = 0;
     long long last_send_ms_ = 0;
     bool warned_ = false;
+    bool pending_clear_ = false;
     uint8_t tab_id_ = 0x47;
 };
 

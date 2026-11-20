@@ -6,6 +6,7 @@
 
 #include "core/Config.hpp"
 #include "features/Automation.hpp"
+#include "proxy/MapArchive.hpp"
 
 namespace imcp::proxy {
 
@@ -19,6 +20,7 @@ public:
     void set_protocol(int protocol);
     void set_overlay(Overlay* overlay) { overlay_ = overlay; }
     void set_automation(features::Automation* automation) { automation_ = automation; }
+    void set_map_archive(MapArchive& archive);
 
     std::string process(const std::string& payload);
 
@@ -33,8 +35,9 @@ private:
     std::string rewrite_team(const std::string& payload);
     bool spoof_component(std::string& json_text) const;
     std::string spoof_plain(const std::string& text) const;
-    std::string apply_component(const std::string& json_text, int max_chars) const;
+    std::string apply_component(const std::string& json_text, int max_chars, bool allow_spoof = true) const;
     std::string apply_plain(const std::string& text, int max_chars) const;
+    std::string apply_field(const std::string& text, int max_chars, bool allow_spoof = true) const;
 
     core::Config& config_;
     std::vector<std::string> names_;
@@ -42,6 +45,7 @@ private:
     std::string display_;
     bool name_protect_ = false;
     bool spoof_enabled_ = false;
+    bool spoof_case_insensitive_ = true;
     bool spoof_chat_ = false;
     bool spoof_tab_ = false;
     bool spoof_title_ = false;
@@ -63,6 +67,8 @@ private:
     int protocol_ = 47;
     PacketIds ids_;
     Overlay* overlay_ = nullptr;
+    MapArchive* map_archive_ = nullptr;
+    MapArchive::Session map_session_ = 0;
     features::Automation* automation_ = nullptr;
 };
 

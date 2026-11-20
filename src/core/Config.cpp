@@ -118,6 +118,31 @@ bool Config::load(const std::string& path) {
     return save();
 }
 
+bool Config::reload(std::string& error) {
+    std::ifstream file(path_);
+    if (!file) {
+        error = "cannot open " + path_;
+        return false;
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    Json parsed;
+    try {
+        parsed = Json::parse(buffer.str());
+    } catch (const std::exception& exception) {
+        error = std::string("invalid JSON: ") + exception.what();
+        return false;
+    }
+    if (!parsed.is_object()) {
+        error = "config root must be a JSON object";
+        return false;
+    }
+    merge_missing(parsed, defaults());
+    root_ = std::move(parsed);
+    error.clear();
+    return true;
+}
+
 bool Config::save() const { return save_as(path_); }
 
 bool Config::save_as(const std::string& path) const {

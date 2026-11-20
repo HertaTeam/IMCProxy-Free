@@ -9,6 +9,7 @@
 
 #include "core/Config.hpp"
 #include "net/TcpListener.hpp"
+#include "proxy/MapArchive.hpp"
 
 namespace imcp::proxy {
 
@@ -23,6 +24,7 @@ public:
     std::string current_id() const { return startup_id_; }
     void set_startup_id(std::string id) { startup_id_ = std::move(id); }
     std::string random_mode() const;
+    const MapArchive& maps() const { return maps_; }
 
 private:
     struct Slot {
@@ -37,6 +39,7 @@ private:
     std::string upstream_name(const std::string& requested);
 
     core::Config& config_;
+    MapArchive maps_;
     std::vector<std::unique_ptr<Slot>> slots_;
     bool running_ = false;
     int players_ = 0;
