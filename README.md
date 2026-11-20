@@ -1,4 +1,4 @@
-![IMCProxyNextGen](src/assets/imcproxynextgen.jpg)
+![IMCProxy-Free](src/assets/imcplogo.jpg)
 
 <p align="center">
   <img src="src/assets/01-default.png" alt="01-default" width="9%" />
